@@ -1,0 +1,100 @@
+project name : Academeet
+
+Featues:-
+
+## **1. User & Profile Management**
+
+* Sign up with university email (verification).
+* Create a profile: name, department, semester, skills, interests.
+* Role toggle: Mentee (default) / Mentor / Both.
+* Edit profile anytime.
+* Option to become a mentor or disable mentor mode.
+
+---
+
+## **2. Mentorship Directory**
+
+* Search and browse mentors by:
+
+  * Department, skills, course, availability, rating, mode (online/in-person).
+* Mentor profiles include:
+
+  * Skills, bio, availability, ratings/reviews, past sessions.
+* Book a mentor directly for a session.
+* Availability calendar to pick time slots.
+
+---
+
+## **3. Help Requests (Marketplace)**
+
+* Mentees can post “Need Help With…” requests:
+
+  * Title, description, course, preferred time, optional budget.
+* Mentors can browse requests and **offer help**:
+
+  * Propose time, fee (if applicable), message.
+* Mentees review offers and accept one.
+* Request statuses: Open, Assigned, Closed.
+* Mentor offers statuses: Pending, Accepted, Declined.
+
+---
+
+## **4. Booking & Sessions**
+
+* Confirmed sessions (from Help Request or direct booking).
+* Session info: mentor, mentee, time, duration, mode.
+* Booking statuses: Scheduled, Completed, Cancelled, No-show.
+* Integration with calendar (optional).
+
+---
+
+## **5. Reviews & Ratings**
+
+* After session, mentee rates mentor (1–5 stars).
+* Short feedback + tags (e.g., “Explains clearly”, “On time”).
+* Public display on mentor profile to build credibility.
+
+---
+
+## **6. MySpace (Personal Dashboard)**
+
+* Unified hub for both mentor and mentee roles.
+* **Sections:**
+
+  * Upcoming sessions (mentee + mentor view)
+  * Requests:
+
+    * Mentee → My posted Help Requests
+    * Mentor → Incoming requests and offers made
+  * History: Completed sessions and reviews
+  * Notifications: All updates, reminders, new offers, session changes
+  * Profile & settings: Edit personal info, role toggle, availability
+
+---
+
+## **7. Notifications & Reminders**
+
+* Automated notifications for:
+
+  * New requests / offers
+  * Bookings confirmed / cancelled
+  * Reminders (24h / 1h before session)
+  * Reviews requested
+* Settings for email/push notifications.
+
+---
+
+## **8. Admin Features**
+
+* Approve/reject “Mentor of the Month” banner.
+* Moderate reviews (if necessary).
+* View platform metrics: top mentors, active users, sessions per week.
+
+---
+
+## **Optional / Future Enhancements**
+
+* Paid sessions & transaction tracking (if you want a monetization model).
+* Featured mentors & trending Help Requests on home page.
+* Gamification: badges for most active mentors or mentees.
+

@@ -1,0 +1,350 @@
+--mysql queries for high level. you can ignore this and jump into the supabase version in line number 96
+
+-- Users (every student is a user, can act as mentor &/or mentee)
+CREATE TABLE users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(150) UNIQUE NOT NULL,
+    department VARCHAR(100),
+    semester VARCHAR(50),
+    skills TEXT, -- JSON or comma-separated list
+    interests TEXT, -- JSON or comma-separated list
+    is_mentor BOOLEAN DEFAULT FALSE, -- role toggle
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Mentor Availability (weekly slots, reusable for booking)
+CREATE TABLE mentor_availability (
+    availability_id INT AUTO_INCREMENT PRIMARY KEY,
+    mentor_id INT NOT NULL,
+    day_of_week ENUM('Mon','Tue','Wed','Thu','Fri','Sat','Sun'),
+    start_time TIME,
+    end_time TIME,
+    FOREIGN KEY (mentor_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Help Requests (posted by mentees)
+CREATE TABLE help_requests (
+    request_id INT AUTO_INCREMENT PRIMARY KEY,
+    mentee_id INT NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    course_code VARCHAR(50),
+    description TEXT,
+    preferred_time DATETIME NULL,
+    budget DECIMAL(10,2) NULL,
+    status ENUM('Open','Assigned','Closed') DEFAULT 'Open',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (mentee_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Offers (mentors responding to help requests)
+CREATE TABLE help_offers (
+    offer_id INT AUTO_INCREMENT PRIMARY KEY,
+    request_id INT NOT NULL,
+    mentor_id INT NOT NULL,
+    proposed_time DATETIME,
+    proposed_fee DECIMAL(10,2) NULL,
+    message TEXT,
+    status ENUM('Pending','Accepted','Declined') DEFAULT 'Pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (request_id) REFERENCES help_requests(request_id) ON DELETE CASCADE,
+    FOREIGN KEY (mentor_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Bookings (confirmed sessions)
+CREATE TABLE bookings (
+    booking_id INT AUTO_INCREMENT PRIMARY KEY,
+    mentee_id INT NOT NULL,
+    mentor_id INT NOT NULL,
+    request_id INT NULL, -- optional if booking came from Help Request
+    offer_id INT NULL,   -- link to accepted offer
+    session_time DATETIME NOT NULL,
+    duration_minutes INT DEFAULT 60,
+    status ENUM('Scheduled','Completed','Cancelled','No-show') DEFAULT 'Scheduled',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (mentee_id) REFERENCES users(user_id),
+    FOREIGN KEY (mentor_id) REFERENCES users(user_id),
+    FOREIGN KEY (request_id) REFERENCES help_requests(request_id),
+    FOREIGN KEY (offer_id) REFERENCES help_offers(offer_id)
+);
+
+-- Reviews (after session)
+CREATE TABLE reviews (
+    review_id INT AUTO_INCREMENT PRIMARY KEY,
+    booking_id INT NOT NULL,
+    mentee_id INT NOT NULL,
+    mentor_id INT NOT NULL,
+    rating INT CHECK (rating BETWEEN 1 AND 5),
+    feedback TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE,
+    FOREIGN KEY (mentee_id) REFERENCES users(user_id),
+    FOREIGN KEY (mentor_id) REFERENCES users(user_id)
+);
+
+-- Notifications (system & reminders)
+CREATE TABLE notifications (
+    notification_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    message VARCHAR(255) NOT NULL,
+    type ENUM('Request','Offer','Booking','Reminder','Review') NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- supabase version:
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Create ENUM types
+CREATE TYPE booking_status AS ENUM ('Scheduled', 'Completed', 'Cancelled', 'No-show');
+CREATE TYPE request_status AS ENUM ('Open', 'Assigned', 'Closed');
+CREATE TYPE offer_status AS ENUM ('Pending', 'Accepted', 'Declined');
+CREATE TYPE notification_type AS ENUM ('Request', 'Offer', 'Booking', 'Reminder', 'Review');
+CREATE TYPE day_of_week AS ENUM ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun');
+
+-- Users table
+CREATE TABLE users (
+    user_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    department TEXT,
+    semester TEXT,
+    skills JSONB,
+    interests JSONB,
+    is_mentor BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Mentor Availability (weekly recurring slots)
+CREATE TABLE mentor_availability (
+    availability_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mentor_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    day_of_week day_of_week NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Availability Exceptions (one-off changes)
+CREATE TABLE availability_exceptions (
+    exception_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mentor_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    exception_date DATE NOT NULL,
+    start_time TIME,
+    end_time TIME,
+    is_available BOOLEAN DEFAULT FALSE, -- FALSE = unavailable, TRUE = available outside normal hours
+    reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Help Requests
+CREATE TABLE help_requests (
+    request_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mentee_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    course_code TEXT,
+    description TEXT,
+    preferred_time TIMESTAMPTZ,
+    budget NUMERIC(10,2),
+    status request_status DEFAULT 'Open',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Help Offers
+CREATE TABLE help_offers (
+    offer_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    request_id UUID NOT NULL REFERENCES help_requests(request_id) ON DELETE CASCADE,
+    mentor_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    proposed_time TIMESTAMPTZ,
+    proposed_fee NUMERIC(10,2),
+    message TEXT,
+    status offer_status DEFAULT 'Pending',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Bookings (with optional foreign keys)
+CREATE TABLE bookings (
+    booking_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mentee_id UUID NOT NULL REFERENCES users(user_id),
+    mentor_id UUID NOT NULL REFERENCES users(user_id),
+    request_id UUID REFERENCES help_requests(request_id) ON DELETE SET NULL, -- Optional link
+    offer_id UUID REFERENCES help_offers(offer_id) ON DELETE SET NULL, -- Optional link
+    session_time TIMESTAMPTZ NOT NULL,
+    duration_minutes INTEGER DEFAULT 60,
+    status booking_status DEFAULT 'Scheduled',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Reviews (allows multiple reviews per booking)
+CREATE TABLE reviews (
+    review_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+    reviewer_id UUID NOT NULL REFERENCES users(user_id), -- Who wrote the review
+    reviewed_user_id UUID NOT NULL REFERENCES users(user_id), -- Who is being reviewed
+    rating INTEGER CHECK (rating BETWEEN 1 AND 5),
+    feedback TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Ensure one review per reviewer per booking
+    UNIQUE(booking_id, reviewer_id)
+);
+
+-- Notifications
+CREATE TABLE notifications (
+    notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    message TEXT NOT NULL,
+    type notification_type NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Updated trigger function
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Triggers for updated_at
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_help_requests_updated_at BEFORE UPDATE ON help_requests FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_help_offers_updated_at BEFORE UPDATE ON help_offers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_bookings_updated_at BEFORE UPDATE ON bookings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Basic indexes
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_is_mentor ON users(is_mentor);
+CREATE INDEX idx_mentor_availability_mentor_id ON mentor_availability(mentor_id);
+CREATE INDEX idx_availability_exceptions_mentor_date ON availability_exceptions(mentor_id, exception_date);
+CREATE INDEX idx_help_requests_mentee_id ON help_requests(mentee_id);
+CREATE INDEX idx_help_requests_status ON help_requests(status);
+CREATE INDEX idx_help_offers_mentor_id ON help_offers(mentor_id);
+CREATE INDEX idx_help_offers_request_id ON help_offers(request_id);
+CREATE INDEX idx_help_offers_status ON help_offers(status);
+CREATE INDEX idx_bookings_mentee_id ON bookings(mentee_id);
+CREATE INDEX idx_bookings_mentor_id ON bookings(mentor_id);
+CREATE INDEX idx_bookings_status ON bookings(status);
+CREATE INDEX idx_reviews_reviewed_user_id ON reviews(reviewed_user_id);
+CREATE INDEX idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX idx_notifications_is_read ON notifications(is_read);
+
+-- Composite indexes for better performance
+CREATE INDEX idx_help_requests_mentee_status ON help_requests(mentee_id, status);
+CREATE INDEX idx_help_offers_mentor_status ON help_offers(mentor_id, status);
+CREATE INDEX idx_bookings_mentor_status ON bookings(mentor_id, status);
+CREATE INDEX idx_bookings_mentee_status ON bookings(mentee_id, status);
+CREATE INDEX idx_notifications_user_read ON notifications(user_id, is_read);
+
+
+-- policies:
+
+-- Enable RLS on all tables
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mentor_availability ENABLE ROW LEVEL SECURITY;
+ALTER TABLE availability_exceptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE help_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE help_offers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+
+-- Users table policies
+CREATE POLICY "Users can view their own profile" ON users
+    FOR SELECT USING (auth.uid()::text = user_id::text);
+
+CREATE POLICY "Users can update their own profile" ON users
+    FOR UPDATE USING (auth.uid()::text = user_id::text);
+
+CREATE POLICY "Users can insert their own profile" ON users
+    FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
+
+-- Mentor availability policies
+CREATE POLICY "Users can manage their own availability" ON mentor_availability
+    FOR ALL USING (auth.uid()::text = mentor_id::text);
+
+CREATE POLICY "Anyone can view mentor availability" ON mentor_availability
+    FOR SELECT USING (true);
+
+-- Availability exceptions policies
+CREATE POLICY "Users can manage their own exceptions" ON availability_exceptions
+    FOR ALL USING (auth.uid()::text = mentor_id::text);
+
+CREATE POLICY "Anyone can view availability exceptions" ON availability_exceptions
+    FOR SELECT USING (true);
+
+-- Help requests policies
+CREATE POLICY "Users can view all help requests" ON help_requests
+    FOR SELECT USING (true);
+
+CREATE POLICY "Users can create their own requests" ON help_requests
+    FOR INSERT WITH CHECK (auth.uid()::text = mentee_id::text);
+
+CREATE POLICY "Users can update their own requests" ON help_requests
+    FOR UPDATE USING (auth.uid()::text = mentee_id::text);
+
+CREATE POLICY "Users can delete their own requests" ON help_requests
+    FOR DELETE USING (auth.uid()::text = mentee_id::text);
+
+-- Help offers policies (SIMPLIFIED)
+CREATE POLICY "Users can view all offers" ON help_offers
+    FOR SELECT USING (true);
+
+CREATE POLICY "Mentors can create offers" ON help_offers
+    FOR INSERT WITH CHECK (auth.uid()::text = mentor_id::text);
+
+CREATE POLICY "Mentors can update their own offers" ON help_offers
+    FOR UPDATE USING (auth.uid()::text = mentor_id::text);
+
+-- Bookings policies
+CREATE POLICY "Users can view their own bookings" ON bookings
+    FOR SELECT USING (
+        auth.uid()::text = mentee_id::text OR 
+        auth.uid()::text = mentor_id::text
+    );
+
+CREATE POLICY "Users can create bookings they're involved in" ON bookings
+    FOR INSERT WITH CHECK (
+        auth.uid()::text = mentee_id::text OR 
+        auth.uid()::text = mentor_id::text
+    );
+
+CREATE POLICY "Users can update their own bookings" ON bookings
+    FOR UPDATE USING (
+        auth.uid()::text = mentee_id::text OR 
+        auth.uid()::text = mentor_id::text
+    );
+
+-- Reviews policies
+CREATE POLICY "Users can view all reviews" ON reviews
+    FOR SELECT USING (true);
+
+CREATE POLICY "Users can create reviews for sessions they participated in" ON reviews
+    FOR INSERT WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM bookings 
+            WHERE booking_id = reviews.booking_id 
+            AND (mentee_id::text = auth.uid()::text OR mentor_id::text = auth.uid()::text)
+        )
+    );
+
+CREATE POLICY "Users can update their own reviews" ON reviews
+    FOR UPDATE USING (auth.uid()::text = reviewer_id::text);
+
+-- Notifications policies
+CREATE POLICY "Users can view their own notifications" ON notifications
+    FOR SELECT USING (auth.uid()::text = user_id::text);
+
+CREATE POLICY "System can create notifications" ON notifications
+    FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Users can update their own notifications" ON notifications
+    FOR UPDATE USING (auth.uid()::text = user_id::text);

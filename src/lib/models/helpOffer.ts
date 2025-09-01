@@ -1,0 +1,251 @@
+// @ts-ignore
+import { supabase } from '../supabaseClient.js';
+import type { HelpOfferData } from '../types/database.js';
+
+export class HelpOffer {
+  offer_id: string | null;
+  request_id: string | null;
+  mentor_id: string | null;
+  proposed_time: string | null;
+  proposed_fee: number | null;
+  message: string;
+  status: 'Pending' | 'Accepted' | 'Declined';
+  created_at: string | null;
+  updated_at: string | null;
+
+  constructor(data: HelpOfferData = {}) {
+    this.offer_id = data.offer_id || null;
+    this.request_id = data.request_id || null;
+    this.mentor_id = data.mentor_id || null;
+    this.proposed_time = data.proposed_time || null;
+    this.proposed_fee = data.proposed_fee || null;
+    this.message = data.message || '';
+    this.status = data.status || 'Pending';
+    this.created_at = data.created_at || null;
+    this.updated_at = data.updated_at || null;
+  }
+
+  // Create a new help offer
+  static async create(offerData: HelpOfferData): Promise<HelpOffer> {
+    try {
+      const { data, error } = await supabase
+        .from('help_offers')
+        .insert([offerData])
+        .select()
+        .single();
+
+      if (error) throw error;
+      return new HelpOffer(data);
+    } catch (error) {
+      console.error('Error creating help offer:', error);
+      throw error;
+    }
+  }
+
+  // Get help offer by ID
+  static async getById(offerId: string): Promise<HelpOffer> {
+    try {
+      const { data, error } = await supabase
+        .from('help_offers')
+        .select(`
+          *,
+          mentor:users!help_offers_mentor_id_fkey(*),
+          request:help_requests!help_offers_request_id_fkey(*)
+        `)
+        .eq('offer_id', offerId)
+        .single();
+
+      if (error) throw error;
+      return new HelpOffer(data);
+    } catch (error) {
+      console.error('Error fetching help offer:', error);
+      throw error;
+    }
+  }
+
+  // Get offers by mentor
+  static async getByMentor(mentorId: string): Promise<HelpOffer[]> {
+    try {
+      const { data, error } = await supabase
+        .from('help_offers')
+        .select(`
+          *,
+          request:help_requests!help_offers_request_id_fkey(
+            *,
+            mentee:users!help_requests_mentee_id_fkey(*)
+          )
+        `)
+        .eq('mentor_id', mentorId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data.map((offer: any) => new HelpOffer(offer));
+    } catch (error) {
+      console.error('Error fetching mentor offers:', error);
+      throw error;
+    }
+  }
+
+  // Get offers by request
+  static async getByRequest(requestId: string): Promise<HelpOffer[]> {
+    try {
+      const { data, error } = await supabase
+        .from('help_offers')
+        .select(`
+          *,
+          mentor:users!help_offers_mentor_id_fkey(*)
+        `)
+        .eq('request_id', requestId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data.map((offer: any) => new HelpOffer(offer));
+    } catch (error) {
+      console.error('Error fetching request offers:', error);
+      throw error;
+    }
+  }
+
+  // Get pending offers for a mentee (offers on their requests)
+  static async getPendingForMentee(menteeId: string): Promise<HelpOffer[]> {
+    try {
+      const { data, error } = await supabase
+        .from('help_offers')
+        .select(`
+          *,
+          mentor:users!help_offers_mentor_id_fkey(*),
+          request:help_requests!help_offers_request_id_fkey(*)
+        `)
+        .eq('status', 'Pending')
+        .eq('request.mentee_id', menteeId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data.map((offer: any) => new HelpOffer(offer));
+    } catch (error) {
+      console.error('Error fetching pending offers for mentee:', error);
+      throw error;
+    }
+  }
+
+  // Update help offer
+  async update(updateData: Partial<HelpOfferData>): Promise<HelpOffer> {
+    try {
+      const { data, error } = await supabase
+        .from('help_offers')
+        .update(updateData)
+        .eq('offer_id', this.offer_id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      // Update current instance
+      Object.assign(this, data);
+      return this;
+    } catch (error) {
+      console.error('Error updating help offer:', error);
+      throw error;
+    }
+  }
+
+  // Accept offer
+  async accept(): Promise<HelpOffer> {
+    try {
+      // Start a transaction-like operation
+      // First, update this offer to accepted
+      await this.update({ status: 'Accepted' });
+
+      // Then, decline all other offers for the same request
+      const { error: declineError } = await supabase
+        .from('help_offers')
+        .update({ status: 'Declined' })
+        .eq('request_id', this.request_id)
+        .neq('offer_id', this.offer_id);
+
+      if (declineError) throw declineError;
+
+      // Finally, mark the request as assigned
+      const { error: requestError } = await supabase
+        .from('help_requests')
+        .update({ status: 'Assigned' })
+        .eq('request_id', this.request_id);
+
+      if (requestError) throw requestError;
+
+      return this;
+    } catch (error) {
+      console.error('Error accepting offer:', error);
+      throw error;
+    }
+  }
+
+  // Decline offer
+  async decline(): Promise<HelpOffer> {
+    try {
+      return await this.update({ status: 'Declined' });
+    } catch (error) {
+      console.error('Error declining offer:', error);
+      throw error;
+    }
+  }
+
+  // Withdraw offer (mentor can withdraw their own offer)
+  async withdraw(): Promise<HelpOffer> {
+    try {
+      return await this.update({ status: 'Declined' });
+    } catch (error) {
+      console.error('Error withdrawing offer:', error);
+      throw error;
+    }
+  }
+
+  // Check if mentor has already offered on this request
+  static async hasMentorOffered(mentorId: string, requestId: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase
+        .from('help_offers')
+        .select('offer_id')
+        .eq('mentor_id', mentorId)
+        .eq('request_id', requestId)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Error checking if mentor offered:', error);
+      throw error;
+    }
+  }
+
+  // Delete help offer
+  async delete(): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('help_offers')
+        .delete()
+        .eq('offer_id', this.offer_id);
+
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error deleting help offer:', error);
+      throw error;
+    }
+  }
+
+  // Convert to JSON
+  toJSON(): HelpOfferData {
+    return {
+      offer_id: this.offer_id,
+      request_id: this.request_id,
+      mentor_id: this.mentor_id,
+      proposed_time: this.proposed_time,
+      proposed_fee: this.proposed_fee,
+      message: this.message,
+      status: this.status,
+      created_at: this.created_at,
+      updated_at: this.updated_at
+    };
+  }
+}

@@ -1,0 +1,108 @@
+BACKEND IMPLEMENTATION TODO LIST
+=====================================
+
+1. SET UP SUPABASE DATABASE
+   - Create all tables from db.txt (users, mentor_availability, availability_exceptions, help_requests, help_offers, bookings, reviews, notifications)
+   - Set up ENUM types (booking_status, request_status, offer_status, notification_type, day_of_week)
+   - Create indexes for performance optimization
+   - Implement Row Level Security (RLS) policies
+   - Set up triggers for updated_at timestamps
+
+2. CREATE DATA MODELS
+   - User model (already exists - enhance if needed)
+   - HelpRequest model
+   - HelpOffer model
+   - Booking model
+   - Review model
+   - Notification model
+   - MentorAvailability model
+   - Update models/index.js exports
+
+3. IMPLEMENT AUTHENTICATION CONTROLLER
+   - Signup functionality (already exists - enhance if needed)
+   - Signin functionality (already exists - enhance if needed)
+   - Profile management
+   - Password reset
+   - Email verification
+   - Session management
+   - Role management (mentor/mentee toggle)
+
+4. IMPLEMENT USER CONTROLLER
+   - Profile CRUD operations
+   - Role toggle functionality
+   - Mentor availability management
+   - User search and filtering
+   - Statistics (ratings, sessions, reviews)
+
+5. IMPLEMENT HELP REQUEST CONTROLLER
+   - Create help requests
+   - Browse and filter requests
+   - Update request status
+   - Delete requests
+   - Search by course, department, skills
+
+6. IMPLEMENT HELP OFFER CONTROLLER
+   - Create offers for requests
+   - Accept/decline offers
+   - Update offer details
+   - Manage offer status
+   - Notify mentees of new offers
+
+7. IMPLEMENT BOOKING CONTROLLER
+   - Create bookings from accepted offers
+   - Schedule sessions
+   - Update booking status
+   - Handle cancellations
+   - Manage session duration
+   - Send booking reminders
+
+8. IMPLEMENT REVIEW CONTROLLER
+   - Create reviews after sessions
+   - Rate mentors/mentees
+   - View reviews
+   - Calculate average ratings
+   - Manage review visibility
+
+9. IMPLEMENT NOTIFICATION CONTROLLER
+   - Create system notifications
+   - Send booking reminders
+   - Notify about new offers
+   - Mark notifications as read
+   - Manage notification preferences
+
+10. CREATE SVELTE STORES
+    - Auth store for user state
+    - User store for profile data
+    - Events store for real-time updates
+    - Role toggle store
+    - Notification store
+
+11. IMPLEMENT VALIDATION UTILITIES
+    - Form input validation
+    - Email validation
+    - Password strength validation
+    - Data integrity checks
+    - Business logic validation
+
+12. CREATE UTILITY FUNCTIONS
+    - Date/time helpers
+    - Data transformation functions
+    - Common operations
+    - Error handling utilities
+    - Formatting helpers
+
+IMPLEMENTATION ORDER:
+1. Database setup (SQL scripts)
+2. Data models (all entity classes)
+3. Controllers (business logic)
+4. Stores (state management)
+5. Utilities (helper functions)
+6. Validation (data integrity)
+
+NOTES:
+- Use existing User model and AuthController as base
+- Follow existing code patterns and structure
+- Ensure proper error handling throughout
+- Implement proper TypeScript types where applicable
+- Test each component thoroughly
+- Document all functions and classes

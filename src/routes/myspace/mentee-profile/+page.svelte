@@ -233,10 +233,11 @@
 								></textarea>
 							</div>
 							<div>
-								<label class="block text-sm font-medium text-gray-700 mb-1">Learning Interests</label>
+								<label for="newInterest" class="block text-sm font-medium text-gray-700 mb-1">Learning Interests</label>
 								<div class="space-y-3">
 									<div class="flex gap-2">
 										<input 
+											id="newInterest"
 											type="text"
 											placeholder="Add new interest..." 
 											bind:value={newInterest}

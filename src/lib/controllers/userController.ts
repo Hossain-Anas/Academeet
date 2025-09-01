@@ -324,7 +324,7 @@ export class UserController {
   }
 
   // Get all users (admin function)
-  static async getAllUsers(limit: number = 50, offset: number = 0): Promise<UserData[]> {
+  static async getAllUsers(): Promise<UserData[]> {
     try {
       // This would need to be implemented in the User model
       // For now, we'll return an empty array

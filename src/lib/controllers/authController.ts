@@ -1,8 +1,8 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import { User } from '../models/user.js';
-import { Notification } from '../models/notification.js';
-import type { UserData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import { User } from '../models/user';
+import { Notification } from '../models/notification';
+import type { UserData } from '../types/database';
 
 // Interface for signup data
 interface SignUpData {
@@ -15,11 +15,7 @@ interface SignUpData {
   interests?: string[];
 }
 
-// Interface for signin data
-interface SignInData {
-  email: string;
-  password: string;
-}
+
 
 // Interface for profile update data
 interface ProfileUpdateData {
@@ -264,7 +260,7 @@ export class AuthController {
   }
 
   // Verify email
-  static async verifyEmail(token: string, type: string = 'email'): Promise<any> {
+  static async verifyEmail(token: string, type: 'email' = 'email'): Promise<any> {
     try {
       const { data, error } = await supabase.auth.verifyOtp({
         token_hash: token,

@@ -1,9 +1,9 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import { User } from '../models/user.js';
-import { MentorAvailability } from '../models/mentorAvailability.js';
-import { Notification } from '../models/notification.js';
-import type { UserData, MentorAvailabilityData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import { User } from '../models/user';
+import { MentorAvailability } from '../models/mentorAvailability';
+import { Notification } from '../models/notification';
+import type { UserData, MentorAvailabilityData } from '../types/database';
 
 // Interface for user profile update
 interface UserProfileUpdate {

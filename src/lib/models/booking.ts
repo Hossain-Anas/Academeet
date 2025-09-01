@@ -1,6 +1,6 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import type { BookingData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import type { BookingData } from '../types/database';
 
 export class Booking {
   booking_id: string | null;

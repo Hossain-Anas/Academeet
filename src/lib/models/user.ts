@@ -1,6 +1,6 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import type { UserData, MentorFilters } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import type { UserData, MentorFilters } from '../types/database';
 
 export class User {
   user_id: string | null;

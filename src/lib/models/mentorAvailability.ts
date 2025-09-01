@@ -1,6 +1,6 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import type { MentorAvailabilityData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import type { MentorAvailabilityData } from '../types/database';
 
 export class MentorAvailability {
   availability_id: string | null;
@@ -187,7 +187,7 @@ export class MentorAvailability {
     try {
       // Convert day of week to actual date
       const targetDate = new Date(date);
-      const dayOfWeek = this.getDayOfWeekString(targetDate.getDay());
+      const dayOfWeek = MentorAvailability.getDayOfWeekString(targetDate.getDay());
       
       if (dayOfWeek !== this.day_of_week) {
         return false;
@@ -234,7 +234,7 @@ export class MentorAvailability {
   static async getAvailableTimeSlots(mentorId: string, date: string, durationMinutes: number = 60): Promise<{ start_time: string; end_time: string; duration_minutes: number }[]> {
     try {
       const targetDate = new Date(date);
-      const dayOfWeek = this.getDayOfWeekString(targetDate.getDay());
+      const dayOfWeek = MentorAvailability.getDayOfWeekString(targetDate.getDay());
       
       // Get mentor's availability for this day
       const availability = await MentorAvailability.getByDay(mentorId, dayOfWeek);

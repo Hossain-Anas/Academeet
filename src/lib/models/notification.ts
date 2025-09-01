@@ -1,6 +1,6 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import type { NotificationData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import type { NotificationData } from '../types/database';
 
 export class Notification {
   notification_id: string | null;
@@ -161,7 +161,7 @@ export class Notification {
   // Mark notification as read
   async markAsRead(): Promise<Notification> {
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('notifications')
         .update({ is_read: true })
         .eq('notification_id', this.notification_id)
@@ -182,7 +182,7 @@ export class Notification {
   // Mark notification as unread
   async markAsUnread(): Promise<Notification> {
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('notifications')
         .update({ is_read: false })
         .eq('notification_id', this.notification_id)

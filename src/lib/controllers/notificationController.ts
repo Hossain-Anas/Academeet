@@ -1,7 +1,7 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import { Notification } from '../models/notification.js';
-import type { NotificationData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import { Notification } from '../models/notification';
+import type { NotificationData } from '../types/database';
 
 // Interface for creating notification
 interface CreateNotificationData {

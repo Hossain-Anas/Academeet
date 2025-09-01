@@ -1,19 +1,25 @@
 <script lang="ts">
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
+	import * as Dialog from '$lib/components/ui/dialog';
+	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
+	import { profile, userLoading, userError } from '$lib/stores/user';
+	import { auth, user } from '$lib/stores/auth';
+	import { onMount } from 'svelte';
 
-	// Sample mentee profile data
+	// Basic mentee profile data - will be populated from userStore
 	let menteeProfile = {
-		name: 'Alex Chen',
-		email: 'alex.chen@student.edu',
-		department: 'Computer Science',
-		interests: ['Web Development', 'Data Science', 'Mobile Apps', 'UI/UX Design'],
-		bio: 'Passionate computer science student in my third year. Looking to improve my programming skills and learn from experienced mentors.',
-		rating: 4.2,
-		totalSessions: 23,
-		profilePicture: '/api/placeholder/150/150'
+		name: 'User',
+		email: 'user@example.com',
+		department: '',
+		interests: [] as string[],
+		bio: '',
+		rating: 0,
+		totalSessions: 0,
+		profilePicture: ''
 	};
+	
+	// Track if component is mounted to prevent hydration mismatch
+	let isMounted = false;
 
 	// Sample sessions data for mentee (learning sessions)
 	let sessions = [
@@ -55,6 +61,9 @@
 		}
 	];
 
+	// Show loading until component is mounted
+	$: showContent = isMounted;
+
 	let searchQuery = '';
 	let sortBy = 'date';
 	let statusSortOrder = 0; // 0: ongoing first, 1: upcoming first, 2: completed first
@@ -64,15 +73,140 @@
 	let selectedSession: any = null;
 	let showSessionDialog = false;
 
-	// Removed handleAcademeetClick function - using proper Svelte link instead
+	// Initialize profile data from userStore
+	onMount(() => {
+		console.log('Mentee profile page mounted');
+		
+		// Mark component as mounted
+		isMounted = true;
+		
+		// Return cleanup function
+		return () => {
+			console.log('Mentee profile page unmounting');
+		};
+	});
 
-	function handleEditProfile() {
-		editProfileData = { ...menteeProfile };
+	// Track previous state to prevent unnecessary updates
+	let prevState = {
+		isMounted: false,
+		profileId: null as string | null,
+		userId: null as string | null,
+		loading: false
+	};
+
+	// Use reactive statement to handle profile updates
+	$: {
+		const currentState = {
+			isMounted,
+			profileId: $profile?.user_id || null,
+			userId: $user?.id || null,
+			loading: $userLoading
+		};
+
+		// Only log state changes if something relevant has changed
+		if (
+			prevState.isMounted !== currentState.isMounted ||
+			prevState.profileId !== currentState.profileId ||
+			prevState.userId !== currentState.userId ||
+			prevState.loading !== currentState.loading
+		) {
+			console.log('Mentee profile state changed:', {
+				isMounted,
+				profile: $profile,
+				userLoading: $userLoading,
+				user: $user
+			});
+
+			if (isMounted) {
+				if ($profile) {
+					console.log('Using profile data for mentee:', $profile);
+					menteeProfile = {
+						name: $profile.name || ($user?.user_metadata?.name || 'User'),
+						email: $profile.email || ($user?.email || 'user@example.com'),
+						department: $profile.department || '',
+						interests: $profile.skills || [],
+						bio: $profile.interests?.join(', ') || '',
+						rating: 0, // Will be calculated from reviews
+						totalSessions: 0, // Will be calculated from bookings
+						profilePicture: ''
+					};
+					editProfileData = { ...menteeProfile };
+				} else if (!$userLoading && $user) {
+					console.log('Using auth user data for mentee:', $user);
+					menteeProfile = {
+						name: $user.user_metadata?.name || 'User',
+						email: $user.email || 'user@example.com',
+						department: $user.user_metadata?.department || '',
+						interests: $user.user_metadata?.skills || [],
+						bio: $user.user_metadata?.interests?.join(', ') || '',
+						rating: 0,
+						totalSessions: 0,
+						profilePicture: ''
+					};
+					editProfileData = { ...menteeProfile };
+				} else if (!$userLoading) {
+					console.log('No profile or user data available for mentee, using defaults');
+					menteeProfile = {
+						name: 'User',
+						email: 'user@example.com',
+						department: '',
+						interests: [],
+						bio: '',
+						rating: 0,
+						totalSessions: 0,
+						profilePicture: ''
+					};
+					editProfileData = { ...menteeProfile };
+				}
+			}
+
+			// Update previous state
+			prevState = currentState;
+		}
 	}
 
-	function handleSaveProfile() {
-		menteeProfile = { ...editProfileData };
-		// Here you would typically save to backend
+	// Function to refresh profile data
+	function refreshProfile() {
+		// This would typically call userManager.getProfile again
+		// For now, we'll just log that it was called
+		console.log('Refreshing profile data...');
+	}
+
+	// Reactive statements for userStore state with fallbacks
+	$: isLoading = $userLoading || false;
+	$: error = $userError || null;
+	
+	// Debug: Log current user state and show success message
+	$: if ($profile) {
+		console.log('Current mentee user profile:', $profile);
+		// Profile successfully loaded
+	}
+	
+	// Fallback for when profile store is not ready
+	$: if (!$profile && !isLoading && !error) {
+		console.log('Mentee profile store not ready yet, using default values');
+	}
+
+
+
+	async function handleSaveProfile() {
+		try {
+			// Update local state
+			menteeProfile = { ...editProfileData };
+			
+			// Here you would typically save to backend via userStore
+			// For now, we'll just update the local state
+			console.log('Mentee profile updated:', menteeProfile);
+			
+			// TODO: Call userManager.updateProfile when backend is ready
+			// const { data, error } = await userManager.updateProfile(userId, {
+			//   department: editProfileData.department,
+			//   skills: editProfileData.interests,
+			//   interests: editProfileData.bio ? [editProfileData.bio] : []
+			// });
+		} catch (error) {
+			console.error('Failed to save mentee profile:', error);
+		}
 	}
 
 	function addInterest() {
@@ -94,6 +228,21 @@
 	function showSessionDetails(session: any) {
 		selectedSession = session;
 		showSessionDialog = true;
+	}
+
+	// Function to handle sign out
+	async function handleSignOut() {
+		try {
+			const { error } = await auth.signOut();
+			if (error) {
+				console.error('Sign out error:', error);
+			} else {
+				// Redirect to sign in page
+				window.location.href = '/auth/signin';
+			}
+		} catch (error) {
+			console.error('Sign out failed:', error);
+		}
 	}
 
 	// Get status statistics
@@ -142,6 +291,7 @@
 		});
 </script>
 
+{#if showContent}
 <!-- Custom MySpace Navigation -->
 <nav class="w-full bg-white border-b border-gray-200 px-4 py-3">
 	<div class="max-w-4xl mx-auto flex items-center justify-between">
@@ -166,18 +316,72 @@
 			</a>
 		</div>
 
-		<!-- Sign Out Link -->
-		<a
-			href="/auth/signout"
-			class="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
+		<!-- Sign Out Button -->
+		<button
+			onclick={handleSignOut}
+			class="text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg transition-all duration-200 border border-red-200 hover:border-red-300"
 		>
 			Sign Out
-		</a>
+		</button>
 	</div>
 </nav>
+{/if}
 
+{#if showContent}
 <div class="container mx-auto px-4 py-8 max-w-6xl">
 	<h1 class="text-3xl font-bold text-gray-900 mb-8">Mentee Profile Page</h1>
+
+	<!-- Loading State -->
+	{#if isLoading}
+		<div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+			<div class="flex items-center justify-between">
+				<div class="flex items-center">
+					<span class="text-blue-600 mr-2">⏳</span>
+					<p class="text-blue-800 text-sm">Loading your profile...</p>
+				</div>
+				<Button 
+					variant="outline" 
+					size="sm" 
+					onclick={refreshProfile}
+					class="text-xs"
+				>
+					🔄 Refresh
+				</Button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Error State -->
+	{#if error}
+		<div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+			<div class="flex items-center justify-between">
+				<div class="flex items-center">
+					<span class="text-red-600 mr-2">⚠️</span>
+					<p class="text-red-800 text-sm">Error loading profile: {error}</p>
+				</div>
+				<Button 
+					variant="outline" 
+					size="sm" 
+					onclick={refreshProfile}
+					class="text-xs"
+				>
+					🔄 Retry
+				</Button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Welcome Message -->
+	{#if !isLoading && !error && !menteeProfile.department && menteeProfile.interests.length === 0 && !menteeProfile.bio}
+		<div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+			<div class="flex items-center">
+				<span class="text-blue-600 mr-2">💡</span>
+				<p class="text-blue-800 text-sm">
+					<strong>Welcome!</strong> Your basic info is set up. Click "Edit Profile" to add your interests and bio to complete your mentee profile.
+				</p>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Profile Section -->
 	<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -221,7 +425,13 @@
 							</div>
 							<div>
 								<label for="department" class="block text-sm font-medium text-gray-700 mb-1">Department</label>
-								<Input id="department" bind:value={editProfileData.department} />
+								<Input 
+									id="department" 
+									value={editProfileData.department} 
+									disabled 
+									class="bg-gray-100 cursor-not-allowed"
+								/>
+								<p class="text-xs text-gray-500 mt-1">Department cannot be changed</p>
 							</div>
 							<div>
 								<label for="bio" class="block text-sm font-medium text-gray-700 mb-1">Bio</label>
@@ -241,12 +451,12 @@
 											type="text"
 											placeholder="Add new interest..." 
 											bind:value={newInterest}
-											on:keydown={(e) => e.key === 'Enter' && addInterest()}
+											onkeydown={(e) => e.key === 'Enter' && addInterest()}
 											class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
 										/>
 										<button 
 											class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-											on:click={addInterest}
+											onclick={addInterest}
 										>
 											Add
 										</button>
@@ -257,7 +467,7 @@
 												<span>{interest}</span>
 												<button 
 													class="text-green-600 hover:text-green-800"
-													on:click={() => removeInterest(index)}
+													onclick={() => removeInterest(index)}
 												>
 													×
 												</button>
@@ -272,7 +482,7 @@
 								<Button variant="outline">Cancel</Button>
 							</Dialog.Close>
 							<Dialog.Close>
-								<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" on:click={handleSaveProfile}>Save Changes</button>
+								<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" onclick={handleSaveProfile}>Save Changes</button>
 							</Dialog.Close>
 						</div>
 					</Dialog.Content>
@@ -321,11 +531,11 @@
 				</select>
 				<button 
 					class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
-					on:click={handleStatusSort}
+					onclick={handleStatusSort}
 				>
 					Sort by Status ({statusSortOrder === 0 ? 'Ongoing' : statusSortOrder === 1 ? 'Upcoming' : 'Completed'} first)
 				</button>
-				<button class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50" on:click={() => searchQuery = ''}>Clear</button>
+				<button class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50" onclick={() => searchQuery = ''}>Clear</button>
 			</div>
 		</div>
 	</div>
@@ -348,7 +558,7 @@
 				</thead>
 				<tbody>
 					{#each filteredSessions as session}
-						<tr class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" on:click={() => showSessionDetails(session)}>
+						<tr class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onclick={() => showSessionDetails(session)}>
 							<td class="py-3 px-4">
 								<div class="font-medium text-gray-900">{session.title}</div>
 							</td>
@@ -578,3 +788,4 @@
 		</Dialog.Root>
 	{/if}
 </div>
+{/if}

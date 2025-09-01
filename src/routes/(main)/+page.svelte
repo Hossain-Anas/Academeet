@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { supabase } from '$lib/supabaseClient.js';
+  import { goto } from '$app/navigation';
+  import { supabase } from '$lib/supabaseClient';
   import Autoplay from "embla-carousel-autoplay";
-  import * as Carousel from "$lib/components/ui/carousel/index.js";
-  import * as Card from "$lib/components/ui/card/index.js";
-  import { isMentorMode } from '$lib/stores/roleToggle.js';
+  import * as Carousel from "$lib/components/ui/carousel";
+  import * as Card from "$lib/components/ui/card";
+
 
   let status = 'Testing...';
 
@@ -39,7 +40,7 @@
 
   async function testSupabase() {
     try {
-      const { data, error } = await supabase.from('users').select('count').limit(1);
+      const { error } = await supabase.from('users').select('count').limit(1);
       
       if (error) {
         status = `❌ Error: ${error.message}`;
@@ -336,7 +337,10 @@
         <div class="text-center p-4">
           <div class="text-3xl mb-3">👨‍🏫</div>
           <p class="text-gray-600 text-sm mb-4">Share your expertise and help students grow</p>
-          <button class="w-full px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all duration-300 font-medium">
+          <button 
+            onclick={() => goto('/myspace/mentor')}
+            class="w-full px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all duration-300 font-medium"
+          >
             Become a Mentor
           </button>
         </div>
@@ -384,7 +388,7 @@
     <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-100/50 shadow-lg">
       <p class="text-sm text-gray-700 font-medium">Database Status: {status}</p>
       <button 
-        on:click={testSupabase}
+        onclick={testSupabase}
         class="mt-3 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all duration-300 font-medium"
       >
         Test Connection

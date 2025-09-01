@@ -1,6 +1,6 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import type { ReviewData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import type { ReviewData } from '../types/database';
 
 export class Review {
   review_id: string | null;

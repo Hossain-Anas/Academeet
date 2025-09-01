@@ -1,20 +1,48 @@
 <script lang="ts">
-	import { Label } from "$lib/components/ui/label/index.js";
-	import { Input } from "$lib/components/ui/input/index.js";
-	import { Button } from "$lib/components/ui/button/index.js";
-	import { cn, type WithElementRef } from "$lib/utils.js";
-	import type { HTMLFormAttributes } from "svelte/elements";
+	import { Label } from "$lib/components/ui/label";
+	import { Input } from "$lib/components/ui/input";
+	import { Button } from "$lib/components/ui/button";
+	import { cn, type WithElementRef } from "$lib/utils";
+
+	import { auth } from "$lib/stores/auth";
+	import { goto } from "$app/navigation";
+
 
 	let {
-		ref = $bindable(null),
-		class: className,
-		...restProps
-	}: WithElementRef<HTMLFormAttributes> = $props();
+		ref = $bindable<HTMLFormElement | null>(null),
+		class: className
+	}: WithElementRef<HTMLFormElement> = $props();
 
 	const id = $props.id();
+
+	let email = $state('');
+	let password = $state('');
+	let isLoading = $state(false);
+	let error = $state('');
+
+	async function handleSubmit(e: Event) {
+		e.preventDefault();
+		isLoading = true;
+		error = '';
+
+		try {
+			const { data, error: authError } = await auth.signIn(email, password);
+			
+			if (authError) {
+				error = authError.message;
+			} else if (data?.user) {
+				// Redirect to home page after successful login
+				goto('/');
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+		} finally {
+			isLoading = false;
+		}
+	}
 </script>
 
-<form class={cn("flex flex-col gap-6", className)} bind:this={ref} {...restProps}>
+<form class={cn("flex flex-col gap-6", className)} bind:this={ref} onsubmit={handleSubmit}>
 	<div class="flex flex-col items-center gap-2 text-center">
 		<h1 class="text-2xl font-bold">Login to your account</h1>
 		<p class="text-muted-foreground text-balance text-sm">
@@ -22,9 +50,21 @@
 		</p>
 	</div>
 	<div class="grid gap-6">
+		{#if error}
+			<div class="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">
+				{error}
+			</div>
+		{/if}
+		
 		<div class="grid gap-3">
 			<Label for="email-{id}">Email</Label>
-			<Input id="email-{id}" type="email" placeholder="m@example.com" required />
+			<Input 
+				id="email-{id}" 
+				type="email" 
+				placeholder="m@example.com" 
+				bind:value={email}
+				required 
+			/>
 		</div>
 		<div class="grid gap-3">
 			<div class="flex items-center">
@@ -33,9 +73,16 @@
 					Forgot your password?
 				</a>
 			</div>
-			<Input id="password-{id}" type="password" required />
+			<Input 
+				id="password-{id}" 
+				type="password" 
+				bind:value={password}
+				required 
+			/>
 		</div>
-		<Button type="submit" class="w-full">Login</Button>
+		<Button type="submit" class="w-full" disabled={isLoading}>
+			{isLoading ? 'Signing in...' : 'Login'}
+		</Button>
 		<div
 			class="after:border-border relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t"
 		>

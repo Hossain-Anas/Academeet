@@ -1,9 +1,9 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import { HelpOffer } from '../models/helpOffer.js';
-import { HelpRequest } from '../models/helpRequest.js';
-import { Notification } from '../models/notification.js';
-import type { HelpOfferData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import { HelpOffer } from '../models/helpOffer';
+import { HelpRequest } from '../models/helpRequest';
+import { Notification } from '../models/notification';
+import type { HelpOfferData } from '../types/database';
 
 // Interface for creating help offer
 interface CreateHelpOfferData {

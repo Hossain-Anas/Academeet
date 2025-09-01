@@ -1,7 +1,7 @@
-export { User } from './user.js';
-export { HelpRequest } from './helpRequest.js';
-export { HelpOffer } from './helpOffer.js';
-export { Booking } from './booking.js';
-export { Review } from './review.js';
-export { Notification } from './notification.js';
-export { MentorAvailability } from './mentorAvailability.js';
+export { User } from './user';
+export { HelpRequest } from './helpRequest';
+export { HelpOffer } from './helpOffer';
+export { Booking } from './booking';
+export { Review } from './review';
+export { Notification } from './notification';
+export { MentorAvailability } from './mentorAvailability';

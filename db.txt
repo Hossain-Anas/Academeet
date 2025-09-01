@@ -245,6 +245,49 @@ CREATE INDEX idx_bookings_mentee_status ON bookings(mentee_id, status);
 CREATE INDEX idx_notifications_user_read ON notifications(user_id, is_read);
 
 
+-- Updated RLS Policies (2024 Update):
+-- This section contains the updated policies that allow viewing all profiles while maintaining security
+
+-- Previous version:
+/*
+CREATE POLICY "Users can view their own profile" ON users
+    FOR SELECT USING (auth.uid()::text = user_id::text);
+
+CREATE POLICY "Users can update their own profile" ON users
+    FOR UPDATE USING (auth.uid()::text = user_id::text);
+
+CREATE POLICY "Users can insert their own profile" ON users
+    FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
+*/
+
+-- New version:
+-- The main change is in the SELECT policy, which now allows viewing all profiles
+-- This is necessary for the mentor/mentee system to work properly
+-- Update and Insert policies remain unchanged to maintain security
+
+-- Drop the restrictive SELECT policy
+DROP POLICY IF EXISTS "Users can view their own profile" ON users;
+
+-- Add new SELECT policy that allows viewing all profiles
+CREATE POLICY "Users can view all profiles" ON users
+    FOR SELECT USING (true);
+
+-- Note: The following policies remain unchanged
+-- They ensure users can only modify their own profiles
+CREATE POLICY "Users can update their own profile" ON users
+    FOR UPDATE USING (auth.uid()::text = user_id::text);
+
+CREATE POLICY "Users can insert their own profile" ON users
+    FOR INSERT WITH CHECK (auth.uid()::text = user_id::text);
+
+-- Security implications:
+-- 1. All authenticated users can VIEW any profile (needed for mentor/mentee system)
+-- 2. Users can only UPDATE their own profile
+-- 3. Users can only INSERT their own profile
+-- 4. No DELETE policy exists (profiles cannot be deleted through normal operations)
+-- 5. All other table policies remain unchanged
+
+
 -- policies:
 
 -- Enable RLS on all tables

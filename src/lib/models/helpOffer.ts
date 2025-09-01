@@ -1,6 +1,6 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import type { HelpOfferData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import type { HelpOfferData } from '../types/database';
 
 export class HelpOffer {
   offer_id: string | null;

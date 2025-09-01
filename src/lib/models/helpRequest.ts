@@ -1,6 +1,6 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import type { HelpRequestData, RequestFilters } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import type { HelpRequestData, RequestFilters } from '../types/database';
 
 export class HelpRequest {
   request_id: string | null;

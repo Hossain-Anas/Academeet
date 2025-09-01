@@ -1,8 +1,8 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import { Review } from '../models/review.js';
-import { Notification } from '../models/notification.js';
-import type { ReviewData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import { Review } from '../models/review';
+import { Notification } from '../models/notification';
+import type { ReviewData } from '../types/database';
 
 // Interface for creating review
 interface CreateReviewData {

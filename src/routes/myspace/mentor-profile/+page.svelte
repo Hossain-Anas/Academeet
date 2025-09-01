@@ -1,59 +1,31 @@
 <script lang="ts">
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
+	import * as Dialog from '$lib/components/ui/dialog';
+	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
+	import { profile, userLoading, userError } from '$lib/stores/user';
+	import { auth, user } from '$lib/stores/auth';
+	import { onMount } from 'svelte';
 
-	// Sample mentor profile data
+	// Basic mentor profile data - will be populated from userStore
 	let mentorProfile = {
-		name: 'Dr. Sarah Johnson',
-		email: 'sarah.johnson@university.edu',
-		department: 'Computer Science',
-		expertise: ['Data Structures', 'Algorithms', 'Web Development', 'Machine Learning'],
-		bio: 'Experienced computer science professor with 8+ years of teaching experience. Passionate about helping students understand complex programming concepts.',
-		rating: 4.8,
-		totalSessions: 156,
-		profilePicture: '/api/placeholder/150/150'
+		name: 'User',
+		email: 'user@example.com',
+		department: '',
+		expertise: [] as string[],
+		bio: '',
+		rating: 0,
+		totalSessions: 0,
+		profilePicture: ''
 	};
-
-	// Sample sessions data
-	let sessions = [
-		{
-			id: '1',
-			title: 'Data Structures Session',
-			student: 'Alice Johnson',
-			date: '2024-01-15T14:00',
-			status: 'ongoing',
-			duration: 60,
-			subject: 'Data Structures'
-		},
-		{
-			id: '2',
-			title: 'Web Development Review',
-			student: 'Bob Wilson',
-			date: '2024-01-17T10:00',
-			status: 'upcoming',
-			duration: 45,
-			subject: 'Web Development'
-		},
-		{
-			id: '3',
-			title: 'Algorithm Analysis',
-			student: 'Charlie Brown',
-			date: '2024-01-10T16:00',
-			status: 'completed',
-			duration: 90,
-			subject: 'Algorithms'
-		},
-		{
-			id: '4',
-			title: 'Machine Learning Basics',
-			student: 'Diana Prince',
-			date: '2024-01-08T13:00',
-			status: 'completed',
-			duration: 75,
-			subject: 'Machine Learning'
-		}
-	];
+	
+		// Track if component is mounted to prevent hydration mismatch
+	let isMounted = false;
+	
+	// Sessions data - initially empty
+	let sessions: any[] = [];
+	
+	// Show loading until component is mounted
+	$: showContent = isMounted;
 
 	let searchQuery = '';
 	let sortBy = 'date';
@@ -64,15 +36,39 @@
 	let selectedSession: any = null;
 	let showSessionDialog = false;
 
+	// Mentor application variables
+	let showMentorDialog = false;
+	let isSubmitting = false;
+	let applicationSubmitted = false;
+	let mentorApplication = {
+		experience: '',
+		qualifications: '',
+		teachingPhilosophy: '',
+		areasOfExpertise: '',
+		availability: '',
+		whyMentor: ''
+	};
+
 	// Removed handleAcademeetClick function - using proper Svelte link instead
 
-	function handleEditProfile() {
-		editProfileData = { ...mentorProfile };
-	}
-
-	function handleSaveProfile() {
-		mentorProfile = { ...editProfileData };
-		// Here you would typically save to backend
+	async function handleSaveProfile() {
+		try {
+			// Update local state
+			mentorProfile = { ...editProfileData };
+			
+			// Here you would typically save to backend via userStore
+			// For now, we'll just update the local state
+			console.log('Profile updated:', mentorProfile);
+			
+			// TODO: Call userManager.updateProfile when backend is ready
+			// const { data, error } = await userManager.updateProfile(userId, {
+			//   department: editProfileData.department,
+			//   skills: editProfileData.expertise,
+			//   interests: editProfileData.bio ? [editProfileData.bio] : []
+			// });
+		} catch (error) {
+			console.error('Failed to save profile:', error);
+		}
 	}
 
 	function addExpertise() {
@@ -94,6 +90,169 @@
 	function showSessionDetails(session: any) {
 		selectedSession = session;
 		showSessionDialog = true;
+	}
+
+	// Mentor application functions
+	async function submitMentorApplication() {
+		isSubmitting = true;
+		
+		try {
+			// Here you would typically submit the application to your backend
+			await new Promise(resolve => setTimeout(resolve, 2000));
+			
+			applicationSubmitted = true;
+			showMentorDialog = false;
+			
+			console.log('Mentor application submitted:', mentorApplication);
+		} catch (error) {
+			console.error('Failed to submit application:', error);
+		} finally {
+			isSubmitting = false;
+		}
+	}
+
+	// Initialize profile data from userStore
+	onMount(() => {
+		console.log('Mentor profile page mounted');
+		
+		// Mark component as mounted
+		isMounted = true;
+		
+		// Return cleanup function
+		return () => {
+			console.log('Mentor profile page unmounting');
+		};
+	});
+
+	// Track previous state to prevent unnecessary updates
+	let prevState = {
+		isMounted: false,
+		profileId: null as string | null,
+		userId: null as string | null,
+		loading: false
+	};
+
+	// Use reactive statement to handle profile updates
+	$: {
+		const currentState = {
+			isMounted,
+			profileId: $profile?.user_id || null,
+			userId: $user?.id || null,
+			loading: $userLoading
+		};
+
+		// Only log state changes if something relevant has changed
+		if (
+			prevState.isMounted !== currentState.isMounted ||
+			prevState.profileId !== currentState.profileId ||
+			prevState.userId !== currentState.userId ||
+			prevState.loading !== currentState.loading
+		) {
+			console.log('Profile state changed:', {
+				isMounted,
+				profile: $profile,
+				userLoading: $userLoading,
+				user: $user
+			});
+
+			if (isMounted) {
+				if ($profile) {
+					console.log('Using profile data:', $profile);
+					mentorProfile = {
+						name: $profile.name || ($user?.user_metadata?.name || 'User'),
+						email: $profile.email || ($user?.email || 'user@example.com'),
+						department: $profile.department || '',
+						expertise: $profile.skills || [],
+						bio: $profile.interests?.join(', ') || '',
+						rating: 0, // Will be calculated from reviews
+						totalSessions: 0, // Will be calculated from bookings
+						profilePicture: ''
+					};
+					editProfileData = { ...mentorProfile };
+				} else if (!$userLoading && $user) {
+					console.log('Using auth user data:', $user);
+					mentorProfile = {
+						name: $user.user_metadata?.name || 'User',
+						email: $user.email || 'user@example.com',
+						department: $user.user_metadata?.department || '',
+						expertise: $user.user_metadata?.skills || [],
+						bio: $user.user_metadata?.interests?.join(', ') || '',
+						rating: 0,
+						totalSessions: 0,
+						profilePicture: ''
+					};
+					editProfileData = { ...mentorProfile };
+				} else if (!$userLoading) {
+					console.log('No profile or user data available, using defaults');
+					mentorProfile = {
+						name: 'User',
+						email: 'user@example.com',
+						department: '',
+						expertise: [],
+						bio: '',
+						rating: 0,
+						totalSessions: 0,
+						profilePicture: ''
+					};
+					editProfileData = { ...mentorProfile };
+				}
+			}
+
+			// Update previous state
+			prevState = currentState;
+		}
+	}
+
+	// Function to refresh profile data
+	function refreshProfile() {
+		// This would typically call userManager.getProfile again
+		// For now, we'll just log that it was called
+		console.log('Refreshing profile data...');
+	}
+
+	// Function to handle sign out
+	async function handleSignOut() {
+		try {
+			const { error } = await auth.signOut();
+			if (error) {
+				console.error('Sign out error:', error);
+			} else {
+				// Redirect to sign in page
+				window.location.href = '/auth/signin';
+			}
+		} catch (error) {
+			console.error('Sign out failed:', error);
+		}
+	}
+
+	// Reactive statements for userStore state with fallbacks
+	$: isLoading = $userLoading || false;
+	$: error = $userError || null;
+	
+	// Debug: Log current user state and show success message
+	$: if ($profile) {
+		console.log('Current user profile:', $profile);
+		// Profile successfully loaded
+	}
+	
+	// Fallback for when profile store is not ready
+	$: if (!$profile && !isLoading && !error) {
+		console.log('Profile store not ready yet, using default values');
+	}
+	
+	// Update mentorProfile when profile store changes (for reactive updates)
+	$: if (isMounted && $profile && ($profile.name !== mentorProfile.name || $profile.email !== mentorProfile.email)) {
+		mentorProfile = {
+			name: $profile.name || 'User',
+			email: $profile.email || 'user@example.com',
+			department: $profile.department || '',
+			expertise: $profile.skills || [],
+			bio: $profile.interests?.join(', ') || '',
+			rating: 0,
+			totalSessions: 0,
+			profilePicture: ''
+		};
+		editProfileData = { ...mentorProfile };
 	}
 
 	// Get status statistics
@@ -142,57 +301,132 @@
 		});
 </script>
 
-<!-- Custom MySpace Navigation -->
-<nav class="w-full bg-white border-b border-gray-200 px-4 py-3">
-	<div class="max-w-4xl mx-auto flex items-center justify-between">
-		<!-- Back to Home Link -->
-		<a
-			href="/"
-			class="text-lg font-medium text-blue-600 hover:text-blue-700 transition-colors"
-		>
-			Back to Home
-		</a>
-		
-		<!-- Navigation Links - Centered -->
-		<div class="flex items-center space-x-8">
-			<a href="/myspace" class="px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">
-				MySpace
+{#if showContent}
+	<!-- Custom MySpace Navigation -->
+	<nav class="w-full bg-white border-b border-gray-200 px-4 py-3">
+		<div class="max-w-4xl mx-auto flex items-center justify-between">
+			<!-- Back to Home Link -->
+			<a
+				href="/"
+				class="text-lg font-medium text-blue-600 hover:text-blue-700 transition-colors"
+			>
+				Back to Home
 			</a>
-			<a href="/myspace/mentor-profile" class="px-3 py-2 text-sm font-medium text-blue-600 border-b-2 border-blue-600">
-				Mentor Profile
-			</a>
-			<a href="/myspace/mentee-profile" class="px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">
-				Mentee Profile
-			</a>
+			
+			<!-- Navigation Links - Centered -->
+			<div class="flex items-center space-x-8">
+				<a href="/myspace" class="px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">
+					MySpace
+				</a>
+				<a href="/myspace/mentor-profile" class="px-3 py-2 text-sm font-medium text-blue-600 border-b-2 border-blue-600">
+					Mentor Profile
+				</a>
+				<a href="/myspace/mentee-profile" class="px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">
+					Mentee Profile
+				</a>
+			</div>
+
+			<!-- Sign Out Button -->
+			<button
+				onclick={handleSignOut}
+				class="text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg transition-all duration-200 border border-red-200 hover:border-red-300"
+			>
+				Sign Out
+			</button>
 		</div>
+	</nav>
+{/if}
 
-		<!-- Sign Out Link -->
-		<a
-			href="/auth/signout"
-			class="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
-		>
-			Sign Out
-		</a>
-	</div>
-</nav>
-
+{#if showContent}
 <div class="container mx-auto px-4 py-8 max-w-6xl">
-	<h1 class="text-3xl font-bold text-gray-900 mb-8">Mentor Profile Page</h1>
+	<div class="flex justify-between items-center mb-8">
+		<h1 class="text-3xl font-bold text-gray-900">Mentor Profile Page</h1>
+		
+		<!-- Join as Mentor Button -->
+		<Button 
+			onclick={() => showMentorDialog = true}
+			class="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all duration-300 font-medium"
+		>
+			👨‍🏫 Join as Mentor
+		</Button>
+	</div>
 
-	<!-- Profile Section -->
+	<!-- Loading State -->
+	{#if isLoading}
+		<div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+			<div class="flex items-center justify-between">
+				<div class="flex items-center">
+					<span class="text-blue-600 mr-2">⏳</span>
+					<p class="text-blue-800 text-sm">Loading your profile...</p>
+				</div>
+				<Button 
+					variant="outline" 
+					size="sm" 
+					onclick={refreshProfile}
+					class="text-xs"
+				>
+					🔄 Refresh
+				</Button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Error State -->
+	{#if error}
+		<div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+			<div class="flex items-center justify-between">
+				<div class="flex items-center">
+					<span class="text-red-600 mr-2">⚠️</span>
+					<p class="text-red-800 text-sm">Error loading profile: {error}</p>
+				</div>
+				<Button 
+					variant="outline" 
+					size="sm" 
+					onclick={refreshProfile}
+					class="text-xs"
+				>
+					🔄 Retry
+				</Button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Welcome Message -->
+	{#if !isLoading && !error && !mentorProfile.department && mentorProfile.expertise.length === 0 && !mentorProfile.bio}
+		<div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+			<div class="flex items-center">
+				<span class="text-blue-600 mr-2">💡</span>
+				<p class="text-blue-800 text-sm">
+					<strong>Welcome!</strong> Your basic info is set up. Click "Edit Profile" to add your expertise and bio to complete your mentor profile.
+				</p>
+			</div>
+		</div>
+	{/if}
 	<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
 		<!-- Profile Picture Card -->
 		<div class="bg-white rounded-lg shadow-md p-6 flex flex-col items-center">
 			<div class="w-32 h-32 rounded-full bg-gray-200 mb-4 flex items-center justify-center">
 				<span class="text-4xl text-gray-500">👤</span>
 			</div>
-			<h2 class="text-xl font-semibold text-gray-900 mb-2">{mentorProfile.name}</h2>
-			<p class="text-sm text-gray-600 mb-4">{mentorProfile.department}</p>
-			<div class="flex items-center mb-2">
-				<span class="text-yellow-500">★</span>
-				<span class="text-sm text-gray-700 ml-1">{mentorProfile.rating}</span>
-			</div>
-			<p class="text-sm text-gray-600">{mentorProfile.totalSessions} sessions completed</p>
+			<h2 class="text-xl font-semibold text-gray-900 mb-2">
+				{mentorProfile.name}
+			</h2>
+			<p class="text-sm text-gray-600 mb-4">
+				{mentorProfile.department || 'Your Department'}
+			</p>
+			{#if mentorProfile.department}
+				<div class="flex items-center mb-2">
+					<span class="text-yellow-500">★</span>
+					<span class="text-sm text-gray-700 ml-1">
+						{mentorProfile.rating > 0 ? mentorProfile.rating : 'No rating yet'}
+					</span>
+				</div>
+				<p class="text-sm text-gray-600">
+					{mentorProfile.totalSessions > 0 ? `${mentorProfile.totalSessions} sessions completed` : 'No sessions yet'}
+				</p>
+			{:else}
+				<p class="text-sm text-gray-500 italic">Complete your profile to get started</p>
+			{/if}
 		</div>
 
 		<!-- Profile Info Card -->
@@ -207,21 +441,19 @@
 						<Dialog.Header>
 							<Dialog.Title>Edit Profile</Dialog.Title>
 							<Dialog.Description>
-								Update your mentor profile information
+								Update your mentor profile information. Your name and email are managed through your account settings.
 							</Dialog.Description>
 						</Dialog.Header>
 						<div class="space-y-4">
 							<div>
-								<label for="name" class="block text-sm font-medium text-gray-700 mb-1">Name</label>
-								<Input id="name" bind:value={editProfileData.name} />
-							</div>
-							<div>
-								<label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
-								<Input id="email" type="email" bind:value={editProfileData.email} />
-							</div>
-							<div>
 								<label for="department" class="block text-sm font-medium text-gray-700 mb-1">Department</label>
-								<Input id="department" bind:value={editProfileData.department} />
+								<Input 
+									id="department" 
+									value={editProfileData.department} 
+									disabled 
+									class="bg-gray-100 cursor-not-allowed"
+								/>
+								<p class="text-xs text-gray-500 mt-1">Department cannot be changed</p>
 							</div>
 							<div>
 								<label for="bio" class="block text-sm font-medium text-gray-700 mb-1">Bio</label>
@@ -233,19 +465,20 @@
 								></textarea>
 							</div>
 							<div>
-								<label class="block text-sm font-medium text-gray-700 mb-1">Expertise</label>
+								<label for="newExpertise" class="block text-sm font-medium text-gray-700 mb-1">Expertise</label>
 								<div class="space-y-3">
 									<div class="flex gap-2">
 										<input 
+											id="newExpertise"
 											type="text"
 											placeholder="Add new expertise..." 
 											bind:value={newExpertise}
-											on:keydown={(e) => e.key === 'Enter' && addExpertise()}
+											onkeydown={(e) => e.key === 'Enter' && addExpertise()}
 											class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
 										/>
 										<button 
 											class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-											on:click={addExpertise}
+											onclick={addExpertise}
 										>
 											Add
 										</button>
@@ -256,7 +489,7 @@
 												<span>{skill}</span>
 												<button 
 													class="text-blue-600 hover:text-blue-800"
-													on:click={() => removeExpertise(index)}
+													onclick={() => removeExpertise(index)}
 												>
 													×
 												</button>
@@ -271,7 +504,7 @@
 								<Button variant="outline">Cancel</Button>
 							</Dialog.Close>
 							<Dialog.Close>
-								<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" on:click={handleSaveProfile}>Save Changes</button>
+								<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" onclick={handleSaveProfile}>Save Changes</button>
 							</Dialog.Close>
 						</div>
 					</Dialog.Content>
@@ -280,20 +513,30 @@
 			
 			<div class="space-y-3">
 				<div>
+					<span class="text-sm font-medium text-gray-700">Name:</span>
+					<p class="text-sm text-gray-900 font-medium">{mentorProfile.name}</p>
+				</div>
+				<div>
 					<span class="text-sm font-medium text-gray-700">Email:</span>
 					<p class="text-sm text-gray-900">{mentorProfile.email}</p>
 				</div>
 				<div>
 					<span class="text-sm font-medium text-gray-700">Expertise:</span>
 					<div class="flex flex-wrap gap-2 mt-1">
-						{#each mentorProfile.expertise as skill}
-							<span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">{skill}</span>
-						{/each}
+						{#if mentorProfile.expertise.length > 0}
+							{#each mentorProfile.expertise as skill}
+								<span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">{skill}</span>
+							{/each}
+						{:else}
+							<p class="text-sm text-gray-500 italic">No expertise added yet</p>
+						{/if}
 					</div>
 				</div>
 				<div>
 					<span class="text-sm font-medium text-gray-700">Bio:</span>
-					<p class="text-sm text-gray-900 mt-1">{mentorProfile.bio}</p>
+					<p class="text-sm text-gray-900 mt-1">
+						{mentorProfile.bio || 'No bio provided'}
+					</p>
 				</div>
 			</div>
 		</div>
@@ -320,11 +563,11 @@
 				</select>
 				<button 
 					class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
-					on:click={handleStatusSort}
+					onclick={handleStatusSort}
 				>
 					Sort by Status ({statusSortOrder === 0 ? 'Ongoing' : statusSortOrder === 1 ? 'Upcoming' : 'Completed'} first)
 				</button>
-				<button class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50" on:click={() => searchQuery = ''}>Clear</button>
+				<button class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50" onclick={() => searchQuery = ''}>Clear</button>
 			</div>
 		</div>
 	</div>
@@ -347,7 +590,7 @@
 				</thead>
 				<tbody>
 					{#each filteredSessions as session}
-						<tr class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" on:click={() => showSessionDetails(session)}>
+						<tr class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onclick={() => showSessionDetails(session)}>
 							<td class="py-3 px-4">
 								<div class="font-medium text-gray-900">{session.title}</div>
 							</td>
@@ -374,7 +617,7 @@
 		
 		{#if filteredSessions.length === 0}
 			<div class="text-center py-8 text-gray-500">
-				No sessions found matching your search criteria.
+				{searchQuery ? 'No sessions found matching your search criteria.' : 'No sessions available yet. Start mentoring to see your sessions here!'}
 			</div>
 		{/if}
 	</div>
@@ -576,4 +819,126 @@
 			</Dialog.Content>
 		</Dialog.Root>
 	{/if}
+
+	<!-- Mentor Application Dialog -->
+	{#if showMentorDialog}
+		<Dialog.Root open={showMentorDialog} onOpenChange={(open) => showMentorDialog = open}>
+			<Dialog.Content class="max-w-3xl w-full">
+				<Dialog.Header>
+					<Dialog.Title>Join as Mentor</Dialog.Title>
+					<Dialog.Description>
+						Share your expertise and help students grow. Fill out the form below to apply for mentor status.
+					</Dialog.Description>
+				</Dialog.Header>
+				
+				<form onsubmit={(e) => { e.preventDefault(); submitMentorApplication(); }} class="space-y-6">
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+						<div>
+							<label for="experience" class="block text-sm font-medium text-gray-700 mb-2">Years of Experience *</label>
+							<Input 
+								id="experience" 
+								bind:value={mentorApplication.experience}
+								placeholder="e.g., 5+ years in Computer Science"
+								required
+							/>
+						</div>
+						<div>
+							<label for="qualifications" class="block text-sm font-medium text-gray-700 mb-2">Qualifications *</label>
+							<Input 
+								id="qualifications" 
+								bind:value={mentorApplication.qualifications}
+								placeholder="e.g., PhD, Industry Experience, Certifications"
+								required
+							/>
+						</div>
+					</div>
+
+					<div>
+						<label for="areasOfExpertise" class="block text-sm font-medium text-gray-700 mb-2">Areas of Expertise *</label>
+						<Input 
+							id="areasOfExpertise" 
+							bind:value={mentorApplication.areasOfExpertise}
+							placeholder="e.g., Data Structures, Algorithms, Web Development"
+							required
+						/>
+					</div>
+
+					<div>
+						<label for="availability" class="block text-sm font-medium text-gray-700 mb-2">Availability *</label>
+						<Input 
+							id="availability" 
+							bind:value={mentorApplication.availability}
+							placeholder="e.g., Weekdays 6-8 PM, Weekends 10 AM-2 PM"
+							required
+						/>
+					</div>
+
+					<div>
+						<label for="teachingPhilosophy" class="block text-sm font-medium text-gray-700 mb-2">Teaching Philosophy *</label>
+						<textarea 
+							id="teachingPhilosophy" 
+							bind:value={mentorApplication.teachingPhilosophy}
+							class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+							rows="3"
+							placeholder="Describe your approach to teaching and mentoring..."
+							required
+						></textarea>
+					</div>
+
+					<div>
+						<label for="whyMentor" class="block text-sm font-medium text-gray-700 mb-2">Why do you want to be a mentor? *</label>
+						<textarea 
+							id="whyMentor" 
+							bind:value={mentorApplication.whyMentor}
+							class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+							rows="3"
+							placeholder="Share your motivation for becoming a mentor..."
+							required
+						></textarea>
+					</div>
+
+					<div class="flex justify-end space-x-2 pt-4">
+						<Dialog.Close>
+							<Button variant="outline">Cancel</Button>
+						</Dialog.Close>
+						<Button 
+							type="submit" 
+							disabled={isSubmitting}
+							class="px-6 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all duration-300"
+						>
+							{isSubmitting ? 'Submitting...' : 'Submit Application'}
+						</Button>
+					</div>
+				</form>
+			</Dialog.Content>
+		</Dialog.Root>
+	{/if}
+
+	<!-- Application Submitted Success Message -->
+	{#if applicationSubmitted}
+		<Dialog.Root open={applicationSubmitted} onOpenChange={(open) => applicationSubmitted = open}>
+			<Dialog.Content class="max-w-2xl w-full">
+				<Dialog.Header>
+					<Dialog.Title>Application Submitted!</Dialog.Title>
+					<Dialog.Description>
+						Thank you for your interest in becoming a mentor. Your application has been submitted and is under review.
+					</Dialog.Description>
+				</Dialog.Header>
+				<div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+					<h3 class="text-lg font-semibold text-green-800 mb-2">What happens next?</h3>
+					<ul class="text-green-700 text-left space-y-1 text-sm">
+						<li>• Our team will review your application within 2-3 business days</li>
+						<li>• You'll receive an email notification once reviewed</li>
+						<li>• If approved, you'll gain access to mentor features</li>
+					</ul>
+				</div>
+				<div class="flex justify-end">
+					<Dialog.Close>
+						<Button>Close</Button>
+					</Dialog.Close>
+				</div>
+			</Dialog.Content>
+		</Dialog.Root>
+	{/if}
 </div>
+{/if}

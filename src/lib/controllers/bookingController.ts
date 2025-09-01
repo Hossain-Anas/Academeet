@@ -1,10 +1,10 @@
 // @ts-ignore
-import { supabase } from '../supabaseClient.js';
-import { Booking } from '../models/booking.js';
-import { HelpOffer } from '../models/helpOffer.js';
-import { HelpRequest } from '../models/helpRequest.js';
-import { Notification } from '../models/notification.js';
-import type { BookingData } from '../types/database.js';
+import { supabase } from '../supabaseClient';
+import { Booking } from '../models/booking';
+import { HelpOffer } from '../models/helpOffer';
+import { HelpRequest } from '../models/helpRequest';
+import { Notification } from '../models/notification';
+import type { BookingData } from '../types/database';
 
 // Interface for creating booking from offer
 interface CreateBookingFromOfferData {

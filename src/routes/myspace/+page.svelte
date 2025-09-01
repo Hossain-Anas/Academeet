@@ -1,7 +1,14 @@
 <script lang="ts">
-	import * as Carousel from '$lib/components/ui/carousel/index.js';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
-	import { isMentorMode } from '$lib/stores/roleToggle.js';
+	import * as Carousel from '$lib/components/ui/carousel';
+	import * as Dialog from '$lib/components/ui/dialog';
+
+	import { auth } from '$lib/stores/auth';
+	import { goto } from '$app/navigation';
+
+	async function handleSignOut() {
+		await auth.signOut();
+		goto('/auth/signin');
+	}
 
 	// Sample upcoming schedule data
 	let upcomingSchedules = [
@@ -83,12 +90,7 @@
 		}
 	];
 
-	// Sample chat messages
-	let chatMessages = [
-		{ id: '1', sender: 'Alice Johnson', message: 'Hi! I have a question about the assignment', time: '10:30 AM' },
-		{ id: '2', sender: 'You', message: 'Sure! What do you need help with?', time: '10:32 AM' },
-		{ id: '3', sender: 'Alice Johnson', message: 'I\'m stuck with the binary tree traversal', time: '10:33 AM' }
-	];
+
 
 	// Removed handleAcademeetClick function - using proper Svelte link instead
 </script>
@@ -117,13 +119,13 @@
 			</a>
 		</div>
 
-		<!-- Sign Out Link -->
-		<a
-			href="/auth/signout"
-			class="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
+		<!-- Sign Out Button -->
+		<button
+			onclick={handleSignOut}
+			class="text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg transition-all duration-200 border border-red-200 hover:border-red-300"
 		>
 			Sign Out
-		</a>
+		</button>
 	</div>
 </nav>
 

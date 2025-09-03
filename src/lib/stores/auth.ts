@@ -11,6 +11,8 @@ export interface User {
     semester?: string;
     skills?: string[];
     interests?: string[];
+    teaching_style?: string;
+    session_types?: string[];
     is_mentor?: boolean;
   };
 }

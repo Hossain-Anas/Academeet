@@ -2,17 +2,33 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import { profile, userLoading, userError } from '$lib/stores/user';
+	import { profile, userLoading, userError, userStore } from '$lib/stores/user';
 	import { auth, user } from '$lib/stores/auth';
+	import { supabase } from '$lib/supabaseClient.js';
 	import { onMount } from 'svelte';
 
+	interface MentorProfile {
+		name: string;
+		email: string;
+		department: string;
+		expertise: string[];
+		bio: string;
+		teachingStyle: string;
+		sessionTypes: string[];
+		rating: number;
+		totalSessions: number;
+		profilePicture: string;
+	}
+
 	// Basic mentor profile data - will be populated from userStore
-	let mentorProfile = {
+	let mentorProfile: MentorProfile = {
 		name: 'User',
 		email: 'user@example.com',
 		department: '',
 		expertise: [] as string[],
 		bio: '',
+		teachingStyle: '',
+		sessionTypes: [] as string[],
 		rating: 0,
 		totalSessions: 0,
 		profilePicture: ''
@@ -32,6 +48,7 @@
 	let statusSortOrder = 0; // 0: ongoing first, 1: upcoming first, 2: completed first
 	let editProfileData = { ...mentorProfile };
 	let newExpertise = '';
+	let newSessionType = '';
 	let showStatusDialog = false;
 	let selectedSession: any = null;
 	let showSessionDialog = false;
@@ -41,12 +58,10 @@
 	let isSubmitting = false;
 	let applicationSubmitted = false;
 	let mentorApplication = {
-		experience: '',
-		qualifications: '',
-		teachingPhilosophy: '',
 		areasOfExpertise: '',
+		bio: '',
 		availability: '',
-		whyMentor: ''
+		teachingMode: 'both'
 	};
 
 	// Removed handleAcademeetClick function - using proper Svelte link instead
@@ -60,12 +75,24 @@
 			// For now, we'll just update the local state
 			console.log('Profile updated:', mentorProfile);
 			
-			// TODO: Call userManager.updateProfile when backend is ready
-			// const { data, error } = await userManager.updateProfile(userId, {
-			//   department: editProfileData.department,
-			//   skills: editProfileData.expertise,
-			//   interests: editProfileData.bio ? [editProfileData.bio] : []
-			// });
+			// Update profile in Supabase
+			if (!$user) throw new Error('User not authenticated');
+
+			const { error: updateError } = await supabase
+				.from('users')
+				.update({
+					department: editProfileData.department,
+					skills: editProfileData.expertise,
+					interests: editProfileData.bio ? [editProfileData.bio] : [],
+					teaching_style: editProfileData.teachingStyle,
+					session_types: editProfileData.sessionTypes
+				})
+				.eq('user_id', $user.id);
+
+			if (updateError) throw updateError;
+
+			// Refresh profile data to get the latest changes
+			await refreshProfile();
 		} catch (error) {
 			console.error('Failed to save profile:', error);
 		}
@@ -80,6 +107,17 @@
 
 	function removeExpertise(index: number) {
 		editProfileData.expertise = editProfileData.expertise.filter((_, i) => i !== index);
+	}
+
+	function addSessionType() {
+		if (newSessionType.trim() && !editProfileData.sessionTypes?.includes(newSessionType.trim())) {
+			editProfileData.sessionTypes = [...(editProfileData.sessionTypes || []), newSessionType.trim()];
+			newSessionType = '';
+		}
+	}
+
+	function removeSessionType(index: number) {
+		editProfileData.sessionTypes = editProfileData.sessionTypes?.filter((_, i) => i !== index) || [];
 	}
 
 	function handleStatusSort() {
@@ -97,13 +135,28 @@
 		isSubmitting = true;
 		
 		try {
-			// Here you would typically submit the application to your backend
-			await new Promise(resolve => setTimeout(resolve, 2000));
+			if (!$user) {
+				throw new Error('User not authenticated');
+			}
+
+			// Update user profile with mentor status and details
+			const { error } = await supabase
+				.from('users')
+				.update({ 
+					is_mentor: true,
+					skills: mentorApplication.areasOfExpertise.split(',').map(s => s.trim()),
+					interests: [mentorApplication.bio]
+				})
+				.eq('user_id', $user.id);
+
+			if (error) throw error;
 			
 			applicationSubmitted = true;
 			showMentorDialog = false;
 			
-			console.log('Mentor application submitted:', mentorApplication);
+			// Refresh profile data
+			await refreshProfile();
+			
 		} catch (error) {
 			console.error('Failed to submit application:', error);
 		} finally {
@@ -164,10 +217,12 @@
 						department: $profile.department || '',
 						expertise: $profile.skills || [],
 						bio: $profile.interests?.join(', ') || '',
+						teachingStyle: $profile.teaching_style || '',
+						sessionTypes: $profile.session_types || [],
 						rating: 0, // Will be calculated from reviews
 						totalSessions: 0, // Will be calculated from bookings
 						profilePicture: ''
-					};
+					} as MentorProfile;
 					editProfileData = { ...mentorProfile };
 				} else if (!$userLoading && $user) {
 					console.log('Using auth user data:', $user);
@@ -177,10 +232,12 @@
 						department: $user.user_metadata?.department || '',
 						expertise: $user.user_metadata?.skills || [],
 						bio: $user.user_metadata?.interests?.join(', ') || '',
+						teachingStyle: $user.user_metadata?.teaching_style || '',
+						sessionTypes: $user.user_metadata?.session_types || [],
 						rating: 0,
 						totalSessions: 0,
 						profilePicture: ''
-					};
+					} as MentorProfile;
 					editProfileData = { ...mentorProfile };
 				} else if (!$userLoading) {
 					console.log('No profile or user data available, using defaults');
@@ -190,10 +247,12 @@
 						department: '',
 						expertise: [],
 						bio: '',
+						teachingStyle: '',
+						sessionTypes: [],
 						rating: 0,
 						totalSessions: 0,
 						profilePicture: ''
-					};
+					} as MentorProfile;
 					editProfileData = { ...mentorProfile };
 				}
 			}
@@ -204,10 +263,28 @@
 	}
 
 	// Function to refresh profile data
-	function refreshProfile() {
-		// This would typically call userManager.getProfile again
-		// For now, we'll just log that it was called
-		console.log('Refreshing profile data...');
+	async function refreshProfile() {
+		try {
+			if (!$user) return;
+
+			const { data, error } = await supabase
+				.from('users')
+				.select('*')
+				.eq('user_id', $user.id)
+				.single();
+
+			if (error) throw error;
+
+			// Update the profile store
+			userStore.update(state => ({
+				...state,
+				profile: data,
+				isLoading: false,
+				error: null
+			}));
+		} catch (error) {
+			console.error('Error refreshing profile:', error);
+		}
 	}
 
 	// Function to handle sign out
@@ -248,10 +325,12 @@
 			department: $profile.department || '',
 			expertise: $profile.skills || [],
 			bio: $profile.interests?.join(', ') || '',
+			teachingStyle: $profile.teaching_style || '',
+			sessionTypes: $profile.session_types || [],
 			rating: 0,
 			totalSessions: 0,
 			profilePicture: ''
-		};
+		} as MentorProfile;
 		editProfileData = { ...mentorProfile };
 	}
 
@@ -462,8 +541,10 @@
 									bind:value={editProfileData.bio}
 									class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
 									rows="3"
+									placeholder="Introduce yourself and describe your background..."
 								></textarea>
 							</div>
+
 							<div>
 								<label for="newExpertise" class="block text-sm font-medium text-gray-700 mb-1">Expertise</label>
 								<div class="space-y-3">
@@ -496,6 +577,53 @@
 											</div>
 										{/each}
 									</div>
+								</div>
+							</div>
+
+							<div>
+								<label for="teachingStyle" class="block text-sm font-medium text-gray-700 mb-1">Teaching Style</label>
+								<textarea 
+									id="teachingStyle" 
+									bind:value={editProfileData.teachingStyle}
+									class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+									rows="3"
+									placeholder="Describe your teaching approach, methods, and what makes your sessions unique..."
+								></textarea>
+							</div>
+
+							<div>
+								<label for="newSessionType" class="block text-sm font-medium text-gray-700 mb-1">Session Types</label>
+								<div class="space-y-3">
+									<div class="flex gap-2">
+										<input 
+											id="newSessionType"
+											type="text"
+											placeholder="Add session type..." 
+											bind:value={newSessionType}
+											onkeydown={(e) => e.key === 'Enter' && addSessionType()}
+											class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										/>
+										<button 
+											class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+											onclick={addSessionType}
+										>
+											Add
+										</button>
+									</div>
+									<div class="flex flex-wrap gap-2">
+										{#each editProfileData.sessionTypes as type, index}
+											<div class="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+												<span>{type}</span>
+												<button 
+													class="text-green-600 hover:text-green-800"
+													onclick={() => removeSessionType(index)}
+												>
+													×
+												</button>
+											</div>
+										{/each}
+									</div>
+									<p class="text-xs text-gray-500">Examples: One-on-one tutoring, Project-based learning, Code review, Career guidance</p>
 								</div>
 							</div>
 						</div>
@@ -832,35 +960,27 @@
 				</Dialog.Header>
 				
 				<form onsubmit={(e) => { e.preventDefault(); submitMentorApplication(); }} class="space-y-6">
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-						<div>
-							<label for="experience" class="block text-sm font-medium text-gray-700 mb-2">Years of Experience *</label>
-							<Input 
-								id="experience" 
-								bind:value={mentorApplication.experience}
-								placeholder="e.g., 5+ years in Computer Science"
-								required
-							/>
-						</div>
-						<div>
-							<label for="qualifications" class="block text-sm font-medium text-gray-700 mb-2">Qualifications *</label>
-							<Input 
-								id="qualifications" 
-								bind:value={mentorApplication.qualifications}
-								placeholder="e.g., PhD, Industry Experience, Certifications"
-								required
-							/>
-						</div>
-					</div>
-
 					<div>
 						<label for="areasOfExpertise" class="block text-sm font-medium text-gray-700 mb-2">Areas of Expertise *</label>
 						<Input 
 							id="areasOfExpertise" 
 							bind:value={mentorApplication.areasOfExpertise}
-							placeholder="e.g., Data Structures, Algorithms, Web Development"
+							placeholder="e.g., Data Structures, Algorithms, Web Development (comma-separated)"
 							required
 						/>
+						<p class="text-sm text-gray-500 mt-1">Separate multiple areas with commas</p>
+					</div>
+
+					<div>
+						<label for="bio" class="block text-sm font-medium text-gray-700 mb-2">Bio/Introduction *</label>
+						<textarea 
+							id="bio" 
+							bind:value={mentorApplication.bio}
+							class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+							rows="3"
+							placeholder="Introduce yourself and describe what you can help with..."
+							required
+						></textarea>
 					</div>
 
 					<div>
@@ -874,27 +994,17 @@
 					</div>
 
 					<div>
-						<label for="teachingPhilosophy" class="block text-sm font-medium text-gray-700 mb-2">Teaching Philosophy *</label>
-						<textarea 
-							id="teachingPhilosophy" 
-							bind:value={mentorApplication.teachingPhilosophy}
+						<label for="teachingMode" class="block text-sm font-medium text-gray-700 mb-2">Teaching Mode *</label>
+						<select 
+							id="teachingMode"
+							bind:value={mentorApplication.teachingMode}
 							class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-							rows="3"
-							placeholder="Describe your approach to teaching and mentoring..."
 							required
-						></textarea>
-					</div>
-
-					<div>
-						<label for="whyMentor" class="block text-sm font-medium text-gray-700 mb-2">Why do you want to be a mentor? *</label>
-						<textarea 
-							id="whyMentor" 
-							bind:value={mentorApplication.whyMentor}
-							class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-							rows="3"
-							placeholder="Share your motivation for becoming a mentor..."
-							required
-						></textarea>
+						>
+							<option value="both">Both Online & In-person</option>
+							<option value="online">Online Only</option>
+							<option value="in-person">In-person Only</option>
+						</select>
 					</div>
 
 					<div class="flex justify-end space-x-2 pt-4">
@@ -914,27 +1024,24 @@
 		</Dialog.Root>
 	{/if}
 
-	<!-- Application Submitted Success Message -->
+	<!-- Success Message -->
 	{#if applicationSubmitted}
 		<Dialog.Root open={applicationSubmitted} onOpenChange={(open) => applicationSubmitted = open}>
 			<Dialog.Content class="max-w-2xl w-full">
 				<Dialog.Header>
-					<Dialog.Title>Application Submitted!</Dialog.Title>
+					<Dialog.Title>Welcome as a Mentor! 🎉</Dialog.Title>
 					<Dialog.Description>
-						Thank you for your interest in becoming a mentor. Your application has been submitted and is under review.
+						You are now a mentor on our platform. Your profile has been updated with your mentor information.
 					</Dialog.Description>
 				</Dialog.Header>
 				<div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-					<h3 class="text-lg font-semibold text-green-800 mb-2">What happens next?</h3>
-					<ul class="text-green-700 text-left space-y-1 text-sm">
-						<li>• Our team will review your application within 2-3 business days</li>
-						<li>• You'll receive an email notification once reviewed</li>
-						<li>• If approved, you'll gain access to mentor features</li>
-					</ul>
+					<p class="text-green-700 text-sm">
+						You can now access all mentor features and start helping other students. Your profile will be visible in the mentor directory.
+					</p>
 				</div>
 				<div class="flex justify-end">
 					<Dialog.Close>
-						<Button>Close</Button>
+						<Button>Start Mentoring</Button>
 					</Dialog.Close>
 				</div>
 			</Dialog.Content>

@@ -7,8 +7,11 @@ CREATE TABLE users (
     email VARCHAR(150) UNIQUE NOT NULL,
     department VARCHAR(100),
     semester VARCHAR(50),
-    skills TEXT, -- JSON or comma-separated list
-    interests TEXT, -- JSON or comma-separated list
+    skills TEXT, -- JSON or comma-separated list (for mentor expertise/skills)
+    interests TEXT, -- JSON or comma-separated list (for user bio/introduction)
+    learning_interests TEXT, -- JSON or comma-separated list (for mentee learning interests)
+    teaching_style TEXT, -- Mentor's teaching approach and methods
+    session_types TEXT, -- JSON array of session types offered by mentor
     is_mentor BOOLEAN DEFAULT FALSE, -- role toggle
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -112,8 +115,11 @@ CREATE TABLE users (
     email TEXT UNIQUE NOT NULL,
     department TEXT,
     semester TEXT,
-    skills JSONB,
-    interests JSONB,
+    skills JSONB,                  -- For mentor expertise/skills
+    interests JSONB,               -- For user bio/introduction
+    learning_interests JSONB,      -- For mentee learning interests (separate from mentor skills)
+    teaching_style TEXT,           -- Mentor's teaching approach and methods
+    session_types JSONB,           -- Array of session types offered by mentor
     is_mentor BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()

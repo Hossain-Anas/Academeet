@@ -10,6 +10,8 @@ export class User {
   semester: string;
   skills: string[];
   interests: string[];
+  teaching_style: string;
+  session_types: string[];
   is_mentor: boolean;
   created_at: string | null;
   updated_at: string | null;
@@ -22,6 +24,8 @@ export class User {
     this.semester = data.semester || '';
     this.skills = data.skills || [];
     this.interests = data.interests || [];
+    this.teaching_style = data.teaching_style || '';
+    this.session_types = data.session_types || [];
     this.is_mentor = data.is_mentor || false;
     this.created_at = data.created_at || null;
     this.updated_at = data.updated_at || null;
@@ -213,6 +217,8 @@ export class User {
       semester: this.semester,
       skills: this.skills,
       interests: this.interests,
+      teaching_style: this.teaching_style,
+      session_types: this.session_types,
       is_mentor: this.is_mentor,
       created_at: this.created_at,
       updated_at: this.updated_at

@@ -11,6 +11,9 @@ export interface UserProfile {
   semester: string;
   skills: string[];
   interests: string[];
+  learning_interests: string[];
+  teaching_style: string;
+  session_types: string[];
   is_mentor: boolean;
   created_at: string;
   updated_at: string;

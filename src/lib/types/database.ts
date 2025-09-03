@@ -8,6 +8,9 @@ export interface UserData {
   semester?: string;
   skills?: string[];
   interests?: string[];
+  learning_interests?: string[];
+  teaching_style?: string;
+  session_types?: string[];
   is_mentor?: boolean;
   created_at?: string | null;
   updated_at?: string | null;

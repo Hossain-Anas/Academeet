@@ -4,6 +4,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { profile, userLoading, userError } from '$lib/stores/user';
 	import { auth, user } from '$lib/stores/auth';
+	import { supabase } from '$lib/supabaseClient.js';
 	import { onMount } from 'svelte';
 
 	// Basic mentee profile data - will be populated from userStore
@@ -124,7 +125,7 @@
 						name: $profile.name || ($user?.user_metadata?.name || 'User'),
 						email: $profile.email || ($user?.email || 'user@example.com'),
 						department: $profile.department || '',
-						interests: $profile.skills || [],
+						interests: $profile.learning_interests || [],
 						bio: $profile.interests?.join(', ') || '',
 						rating: 0, // Will be calculated from reviews
 						totalSessions: 0, // Will be calculated from bookings
@@ -191,19 +192,25 @@
 
 	async function handleSaveProfile() {
 		try {
+			if (!$user) {
+				throw new Error('User not authenticated');
+			}
+
+			// Update profile in Supabase
+			const { error } = await supabase
+				.from('users')
+				.update({
+					learning_interests: editProfileData.interests,
+					interests: editProfileData.bio ? [editProfileData.bio] : []
+				})
+				.eq('user_id', $user.id);
+
+			if (error) throw error;
+
 			// Update local state
 			menteeProfile = { ...editProfileData };
 			
-			// Here you would typically save to backend via userStore
-			// For now, we'll just update the local state
 			console.log('Mentee profile updated:', menteeProfile);
-			
-			// TODO: Call userManager.updateProfile when backend is ready
-			// const { data, error } = await userManager.updateProfile(userId, {
-			//   department: editProfileData.department,
-			//   skills: editProfileData.interests,
-			//   interests: editProfileData.bio ? [editProfileData.bio] : []
-			// });
 		} catch (error) {
 			console.error('Failed to save mentee profile:', error);
 		}

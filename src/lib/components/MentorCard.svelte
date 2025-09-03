@@ -31,7 +31,9 @@
   let selectedDateTime = '';
   let selectedDuration = 60;
   let message = '';
-  let bookingDialog: any;
+  let isTimeSlotValid = true;
+  let isBookingSuccess = false;
+  let bookingChannel: any;
 
   // Get minimum date-time (now + 30 minutes to allow for processing)
   $: minDateTime = (() => {
@@ -40,30 +42,165 @@
     return now.toISOString().slice(0, 16);
   })();
 
-  async function checkExistingBookings(startTime: string, duration: number): Promise<boolean> {
-    try {
-      const sessionStart = new Date(startTime);
-      const sessionEnd = new Date(sessionStart.getTime() + duration * 60000);
-
-      const { data: existingBookings, error } = await supabase
-        .from('bookings')
-        .select('*')
-        .eq('mentee_id', $user?.id)
-        .in('status', ['Scheduled', 'Completed'])
-        .or(`session_time.gte.${sessionStart.toISOString()},session_time.lt.${sessionEnd.toISOString()}`);
-
-      if (error) throw error;
-
-      return existingBookings && existingBookings.length > 0;
-    } catch (error) {
-      console.error('Error checking existing bookings:', error);
-      return false;
+  // Check time slot whenever datetime or duration changes
+  $: {
+    if (selectedDateTime && selectedDuration) {
+      isTimeSlotValid = false; // Set to false while checking
+      checkExistingBookings(selectedDateTime, selectedDuration).then(result => {
+        isTimeSlotValid = !result.hasConflict;
+        if (result.hasConflict) {
+          toast.show(result.error || 'Time slot not available', 'warning');
+        }
+      });
+    } else {
+      isTimeSlotValid = false; // Default to invalid if no date/time selected
     }
   }
 
+  onDestroy(() => {
+    // Clean up subscriptions
+    if (bookingChannel) bookingChannel.unsubscribe();
+  });
+
+  // FIXED: Consistent timezone conversion functions
+  
+  // Convert BD time input to UTC for database storage
+  function bdToUTC(bdDateTime: string | Date): Date {
+    const bdDate = typeof bdDateTime === 'string' ? new Date(bdDateTime) : new Date(bdDateTime);
+    
+    // The input from datetime-local is treated as local time
+    // We need to interpret it as BD time and convert to UTC
+    const year = bdDate.getFullYear();
+    const month = bdDate.getMonth();
+    const day = bdDate.getDate();
+    const hour = bdDate.getHours();
+    const minute = bdDate.getMinutes();
+    const second = bdDate.getSeconds();
+    
+    // Create UTC date by subtracting 6 hours (BD is UTC+6)
+    return new Date(Date.UTC(year, month, day, hour - 6, minute, second));
+  }
+
+  // Convert UTC to BD time for display
+  function utcToBD(utcDateTime: string | Date): string {
+    const utcDate = typeof utcDateTime === 'string' ? new Date(utcDateTime) : utcDateTime;
+    
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Dhaka',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+    
+    return formatter.format(utcDate) + ' BDT';
+  }
+
+
+
+  async function checkExistingBookings(startTime: string, duration: number): Promise<{ hasConflict: boolean; error?: string }> {
+    try {
+      // Parse the selected time as BD time and convert to UTC for comparison
+      const selectedStartUTC = bdToUTC(startTime);
+      const now = new Date();
+      
+      if (selectedStartUTC <= now) {
+        return { hasConflict: true, error: 'Cannot book sessions in the past' };
+      }
+
+      // Calculate the new session time range in UTC
+      const newSessionStart = selectedStartUTC;
+      const newSessionEnd = new Date(newSessionStart.getTime() + duration * 60000);
+      
+      console.log('New session time range (UTC):', {
+        start: newSessionStart.toISOString(),
+        end: newSessionEnd.toISOString(),
+        startBD: utcToBD(newSessionStart),
+        endBD: utcToBD(newSessionEnd)
+      });
+
+      // Check mentee's existing bookings
+      const { data: menteeBookings, error: menteeError } = await supabase
+        .from('bookings')
+        .select('*, mentor:users!bookings_mentor_id_fkey (name)')
+        .eq('mentee_id', $user?.id)
+        .in('status', ['Pending', 'Confirmed']);
+
+      if (menteeError) throw menteeError;
+
+      // Check for overlaps with mentee's existing bookings
+      if (menteeBookings && menteeBookings.length > 0) {
+        for (const booking of menteeBookings) {
+          const existingStart = new Date(booking.session_time);
+          const existingEnd = new Date(existingStart.getTime() + booking.duration_minutes * 60000);
+          
+          if (hasTimeOverlap(newSessionStart, newSessionEnd, existingStart, existingEnd)) {
+            const mentorName = booking.mentor?.name || 'a mentor';
+            const sessionStatus = booking.status.toLowerCase();
+            
+            return { 
+              hasConflict: true, 
+              error: `You already have a ${sessionStatus} session with ${mentorName} from ${utcToBD(existingStart)} to ${utcToBD(existingEnd)}`
+            };
+          }
+        }
+      }
+
+      // Check mentor's existing bookings
+      const { data: mentorBookings, error: mentorError } = await supabase
+        .from('bookings')
+        .select('*, mentee:users!bookings_mentee_id_fkey (name)')
+        .eq('mentor_id', mentor.user_id)
+        .in('status', ['Pending', 'Confirmed']);
+
+      if (mentorError) throw mentorError;
+
+      // Check for overlaps with mentor's existing bookings
+      if (mentorBookings && mentorBookings.length > 0) {
+        for (const booking of mentorBookings) {
+          const existingStart = new Date(booking.session_time);
+          const existingEnd = new Date(existingStart.getTime() + booking.duration_minutes * 60000);
+          
+          if (hasTimeOverlap(newSessionStart, newSessionEnd, existingStart, existingEnd)) {
+            return { 
+              hasConflict: true, 
+              error: `${mentor.name} has another session scheduled from ${utcToBD(existingStart)} to ${utcToBD(existingEnd)}`
+            };
+          }
+        }
+      }
+
+      return { hasConflict: false };
+    } catch (error) {
+      console.error('Error checking existing bookings:', error);
+      return { hasConflict: false };
+    }
+  }
+
+  // Helper function to check if two time ranges overlap
+  function hasTimeOverlap(
+    start1: Date, 
+    end1: Date, 
+    start2: Date, 
+    end2: Date
+  ): boolean {
+    const overlap = start1 < end2 && start2 < end1;
+    
+    console.log('Checking overlap:', {
+      range1: `${start1.toISOString()} - ${end1.toISOString()}`,
+      range2: `${start2.toISOString()} - ${end2.toISOString()}`,
+      hasOverlap: overlap
+    });
+    
+    return overlap;
+  }
+
+  // Updated form submission handler
   async function handleBookSession(event: Event) {
     event.preventDefault();
-    console.log('Form submitted');
+    
     try {
       if (!$user) {
         toast.show('Please log in to book a session', 'error');
@@ -75,24 +212,22 @@
         return;
       }
 
-      // Check for existing bookings
-      const hasExistingBooking = await checkExistingBookings(selectedDateTime, selectedDuration);
-      if (hasExistingBooking) {
-        toast.show('You already have a session scheduled during this time slot', 'error');
+      // Double-check for conflicts before submission
+      const conflictCheck = await checkExistingBookings(selectedDateTime, selectedDuration);
+      if (conflictCheck.hasConflict) {
+        toast.show(conflictCheck.error || 'Time slot is not available', 'error');
         return;
       }
 
       isSubmitting = true;
+      
+      // Convert BD time to UTC for database storage
+      const utcDateTime = bdToUTC(selectedDateTime).toISOString();
 
-      // Create booking using Supabase client
-      console.log('Sending booking request:', {
-        mentee_id: $user.id,
-        mentor_id: mentor.user_id,
-        session_time: selectedDateTime,
-        duration_minutes: selectedDuration,
-        status: 'Scheduled',
-        topic: selectedTopic,
-        message: message
+      console.log('Booking details:', {
+        selectedDateTime_BD: selectedDateTime,
+        utcDateTime: utcDateTime,
+        duration: selectedDuration
       });
 
       const { data: booking, error: bookingError } = await supabase
@@ -100,19 +235,28 @@
         .insert({
           mentee_id: $user.id,
           mentor_id: mentor.user_id,
-          session_time: selectedDateTime,
+          session_time: utcDateTime,
           duration_minutes: selectedDuration,
-          status: 'Scheduled',
+          status: 'Pending',
           topic: selectedTopic,
           message: message
         })
         .select(`
-          *,
+          booking_id,
+          mentee_id,
+          mentor_id,
+          session_time,
+          duration_minutes,
+          status,
+          topic,
+          message,
           mentee:users!bookings_mentee_id_fkey (
-            name
+            name,
+            email
           ),
           mentor:users!bookings_mentor_id_fkey (
-            name
+            name,
+            email
           )
         `)
         .single();
@@ -122,10 +266,35 @@
         throw new Error(bookingError.message || 'Failed to book session');
       }
 
-      console.log('Booking response:', booking);
+      // Create notifications with proper time formatting
+      const menteeName = (booking.mentee as any)?.name || 'Unknown';
+      const mentorName = (booking.mentor as any)?.name || 'Unknown';
+      const bdTimeFormatted = utcToBD(utcDateTime);
+      
+      const notifications = [
+        {
+          user_id: mentor.user_id,
+          message: `New session request from ${menteeName} for ${selectedTopic} on ${bdTimeFormatted}`,
+          type: 'Booking',
+          is_read: false
+        },
+        {
+          user_id: $user?.id,
+          message: `Session request sent to ${mentorName} for ${selectedTopic} at ${bdTimeFormatted}. Awaiting confirmation.`,
+          type: 'Booking',
+          is_read: false
+        }
+      ];
 
-      // Subscribe to real-time updates for this booking
-      supabase.channel(`booking:${booking.booking_id}`)
+      const { error: notificationError } = await supabase
+        .from('notifications')
+        .insert(notifications);
+
+      if (notificationError) throw notificationError;
+
+      // Set up real-time subscription for booking updates
+      bookingChannel = supabase
+        .channel(`booking:${booking.booking_id}`)
         .on(
           'postgres_changes',
           {
@@ -135,6 +304,7 @@
             filter: `booking_id=eq.${booking.booking_id}`
           },
           (payload: { new: { status: string } }) => {
+            console.log('Booking status changed:', payload);
             if (payload.new.status === 'Confirmed') {
               toast.show('Session confirmed! Check your upcoming sessions.', 'success');
             }
@@ -142,42 +312,16 @@
         )
         .subscribe();
 
-      // Subscribe to notifications
-      supabase.channel(`notifications:${$user?.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'notifications',
-            filter: `user_id=eq.${$user?.id}`
-          },
-          (payload: { new: { message: string } }) => {
-            toast.show(payload.new.message, 'info');
-          }
-        )
-        .subscribe();
-
-      toast.show('Booking request sent successfully!', 'success');
-      bookingDialog?.close();
-
-      // Reset form
-      selectedTopic = '';
-      selectedDateTime = '';
-      selectedDuration = 60;
-      message = '';
+      isBookingSuccess = true;
+      toast.show('Session booked successfully! Check your upcoming schedules.', 'success');
 
     } catch (error) {
+      console.error('Booking error:', error);
       toast.show(error instanceof Error ? error.message : 'An error occurred', 'error');
     } finally {
       isSubmitting = false;
     }
   }
-
-  onDestroy(() => {
-    // Clean up subscriptions
-    supabase.removeAllChannels();
-  });
 </script>
 
 <div class="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow duration-200 border border-gray-100">
@@ -218,7 +362,6 @@
           <span class="text-blue-500 mr-1">👥</span>
           <span>{mentor.students} students</span>
         </div>
-
       </div>
       
       <!-- Bio Preview -->
@@ -268,7 +411,6 @@
                          <span class="text-blue-500 mr-1">👥</span>
                          <span class="font-semibold">{mentor.students}</span>
                        </div>
-
                      </div>
                    </div>
                  </div>
@@ -298,21 +440,21 @@
                    <div>
                      <h3 class="text-sm font-semibold text-gray-900 mb-1">Teaching Style</h3>
                      <p class="text-xs text-gray-700">
-                       {mentor.teachingStyle || `${mentor.name} has not provided their teaching style yet.`}
+                      {mentor.teachingStyle || `${mentor.name} has not provided their teaching style yet.`}
                      </p>
                    </div>
                    
                    <div>
                      <h3 class="text-sm font-semibold text-gray-900 mb-1">Session Types</h3>
-                     {#if mentor.sessionTypes && mentor.sessionTypes.length > 0}
-                       <ul class="text-xs text-gray-700 space-y-0.5">
-                         {#each mentor.sessionTypes as type}
-                           <li>• {type}</li>
-                         {/each}
-                       </ul>
-                     {:else}
-                       <p class="text-xs text-gray-700">No session types specified yet.</p>
-                     {/if}
+                    {#if mentor.sessionTypes && mentor.sessionTypes.length > 0}
+                     <ul class="text-xs text-gray-700 space-y-0.5">
+                        {#each mentor.sessionTypes as type}
+                          <li>• {type}</li>
+                        {/each}
+                     </ul>
+                    {:else}
+                      <p class="text-xs text-gray-700">No session types specified yet.</p>
+                    {/if}
                    </div>
                  </div>
                </div>
@@ -325,28 +467,35 @@
                   Close
                 </button>
               </Dialog.Close>
-              <Dialog.Close>
-                <button class="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors">
-                  Book Session
-                </button>
-              </Dialog.Close>
             </div>
           </Dialog.Content>
         </Dialog.Root>
         
                  <!-- Book Session Dialog -->
-         <Dialog.Root bind:this={bookingDialog}>
+        <Dialog.Root 
+          onOpenChange={(open: boolean) => { 
+            if (!open) {
+              isSubmitting = false;
+            } else {
+              // Reset form and validation when dialog opens
+              selectedTopic = '';
+              selectedDateTime = '';
+              selectedDuration = 60;
+              message = '';
+              isTimeSlotValid = true;
+            }
+          }}>
            <Dialog.Trigger>
              <button 
-               class="px-4 py-2 border border-gray-300 text-sm rounded-lg transition-colors {isBookingDisabled ? 'text-gray-400 bg-gray-100 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50'}"
-               disabled={isBookingDisabled}
-               title={isSelfBooking ? "You cannot book your own session" : $isMentorMode ? "Switch to mentee mode to book sessions" : ""}
+              class="px-4 py-2 border border-gray-300 text-sm rounded-lg transition-colors {isBookingDisabled ? 'text-gray-400 bg-gray-100 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50'}"
+              disabled={isBookingDisabled}
+              title={isSelfBooking ? "You cannot book your own session" : $isMentorMode ? "Switch to mentee mode to book sessions" : ""}
              >
-               {#if isSelfBooking}
-                 Cannot Book Own Session
-               {:else}
-                 Book Session
-               {/if}
+              {#if isSelfBooking}
+                Cannot Book Own Session
+              {:else}
+               Book Session
+              {/if}
              </button>
            </Dialog.Trigger>
           <Dialog.Content>
@@ -380,11 +529,11 @@
               
               <div>
                 <label for="session-datetime" class="block text-sm font-medium text-gray-700 mb-2">
-                  Preferred Date & Time
+                  Preferred Date & Time (Bangladesh Time)
                 </label>
                 <input 
                   id="session-datetime"
-                  type="datetime-local"
+                  type="datetime-local" 
                   bind:value={selectedDateTime}
                   min={minDateTime}
                   required
@@ -421,27 +570,43 @@
                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 ></textarea>
               </div>
-            
-              <!-- Dialog Actions -->
-              <div class="flex justify-end space-x-2 pt-4">
-                <Dialog.Close>
-                  <button 
-                    type="button"
-                    class="px-4 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </Dialog.Close>
-                <button 
-                  type="submit"
-                  disabled={isSubmitting}
-                  class="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Booking...' : 'Book Session'}
+              
+              <!-- Success Message -->
+              {#if isBookingSuccess}
+                <div class="flex flex-col items-center justify-center py-4 space-y-4">
+                  <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                    <span class="text-2xl text-green-600">✓</span>
+                  </div>
+                  <h3 class="text-lg font-semibold text-gray-900">Booking Successful!</h3>
+                  <p class="text-sm text-gray-600 text-center">
+                    Your session has been booked successfully. You can view the details in your upcoming schedules.
+                  </p>
+            </div>
+              {:else}
+            <!-- Dialog Actions -->
+            <div class="flex justify-end space-x-2 pt-4">
+              <Dialog.Close>
+                    <button 
+                      type="button"
+                      class="px-4 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                  Cancel
                 </button>
-              </div>
+              </Dialog.Close>
+                  <button 
+                    type="submit"
+                    disabled={isSubmitting || !isTimeSlotValid || !selectedDateTime || !selectedDuration}
+                    class="px-4 py-2 text-white text-sm rounded-lg transition-colors disabled:opacity-50 {isTimeSlotValid && selectedDateTime && selectedDuration ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400'}"
+                  >
+                    {isSubmitting ? 'Booking...' : 
+                      !selectedDateTime || !selectedDuration ? 'Select Date & Time' :
+                      !isTimeSlotValid ? (selectedDateTime && selectedDuration ? 'Time Slot Not Available - Check Schedule' : 'Time Slot Not Available') : 
+                      'Book Session'}
+              </button>
+            </div>
+              {/if}
             </form>
-          </Dialog.Content>
+                     </Dialog.Content>
          </Dialog.Root>
       </div>
     </div>

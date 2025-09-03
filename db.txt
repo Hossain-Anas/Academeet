@@ -63,7 +63,7 @@ CREATE TABLE bookings (
     offer_id INT NULL,   -- link to accepted offer
     session_time DATETIME NOT NULL,
     duration_minutes INT DEFAULT 60,
-    status ENUM('Scheduled','Completed','Cancelled','No-show') DEFAULT 'Scheduled',
+    status ENUM('Pending','Confirmed','Completed','Cancelled','No-show') DEFAULT 'Pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (mentee_id) REFERENCES users(user_id),
     FOREIGN KEY (mentor_id) REFERENCES users(user_id),
@@ -102,7 +102,7 @@ CREATE TABLE notifications (
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Create ENUM types
-CREATE TYPE booking_status AS ENUM ('Scheduled', 'Completed', 'Cancelled', 'No-show');
+CREATE TYPE booking_status AS ENUM ('Pending', 'Confirmed', 'Completed', 'Cancelled', 'No-show');
 CREATE TYPE request_status AS ENUM ('Open', 'Assigned', 'Closed');
 CREATE TYPE offer_status AS ENUM ('Pending', 'Accepted', 'Declined');
 CREATE TYPE notification_type AS ENUM ('Request', 'Offer', 'Booking', 'Reminder', 'Review');

@@ -260,33 +260,46 @@ export const auth = {
     return supabase.auth.onAuthStateChange(async (event: string, session: Session | null) => {
       console.log('Auth state changed:', event, session);
       
-      if (event === 'INITIAL_SESSION') {
-        // Handle initial session state
-        if (session) {
+      // Skip update if nothing has changed
+      const currentState = get(authStore);
+      const userId = session?.user?.id;
+      
+      if (
+        currentState.user?.id === userId &&
+        currentState.isAuthenticated === !!userId &&
+        !currentState.isLoading
+      ) {
+        console.log('Auth state unchanged, skipping update');
+        return;
+      }
+
+      // Update auth store based on event type
+      switch (event) {
+        case 'INITIAL_SESSION':
           authStore.update(state => ({
             ...state,
-            user: session.user,
+            user: session?.user || null,
             session,
-            isAuthenticated: true,
+            isAuthenticated: !!session?.user,
             isLoading: false,
             error: null
           }));
-          
-          // Load user profile to initialize role toggle
-          if (session.user) {
-            try {
-              const { userManager } = await import('./user');
-              await userManager.getProfile(session.user.id);
-              
-              // Initialize role toggle after profile is loaded
-              const { initializeRole } = await import('./roleToggle');
-              initializeRole();
-            } catch (error) {
-              console.error('Failed to load user profile:', error);
-            }
+          break;
+
+        case 'SIGNED_IN':
+          if (session) {
+            authStore.update(state => ({
+              ...state,
+              user: session.user,
+              session,
+              isAuthenticated: true,
+              isLoading: false,
+              error: null
+            }));
           }
-        } else {
-          // No initial session - user is not authenticated
+          break;
+
+        case 'SIGNED_OUT':
           authStore.update(state => ({
             ...state,
             user: null,
@@ -295,48 +308,23 @@ export const auth = {
             isLoading: false,
             error: null
           }));
-        }
-      } else if (event === 'SIGNED_IN' && session) {
-        authStore.update(state => ({
-          ...state,
-          user: session.user,
-          session,
-          isAuthenticated: true,
-          isLoading: false,
-          error: null
-        }));
-        
-        // Load user profile to initialize role toggle
-        if (session.user) {
-          try {
-            const { userManager } = await import('./user');
-            await userManager.getProfile(session.user.id);
-            
-            // Initialize role toggle after profile is loaded
-            const { initializeRole } = await import('./roleToggle');
-            initializeRole();
-          } catch (error) {
-            console.error('Failed to load user profile:', error);
+          break;
+
+        case 'TOKEN_REFRESHED':
+          if (session) {
+            authStore.update(state => ({
+              ...state,
+              session,
+              user: session.user,
+              isAuthenticated: true,
+              isLoading: false
+            }));
           }
-        }
-      } else if (event === 'SIGNED_OUT') {
-        authStore.update(state => ({
-          ...state,
-          user: null,
-          session: null,
-          isAuthenticated: false,
-          isLoading: false,
-          error: null
-        }));
-      } else if (event === 'TOKEN_REFRESHED' && session) {
-        authStore.update(state => ({
-          ...state,
-          session,
-          user: session.user,
-          isAuthenticated: true,
-          isLoading: false
-        }));
+          break;
       }
+
+      // Let the user store handle profile loading and role initialization
+      // The user store subscription will automatically handle this when auth user changes
     });
   },
 

@@ -1,0 +1,178 @@
+// Function: create-booking
+// Endpoint: /functions/v1/create-booking
+
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
+};
+
+serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', {
+      headers: corsHeaders
+    });
+  }
+
+  try {
+    // Create Supabase client
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+
+    // Get request body
+    const { menteeId, mentorId, sessionTime, durationMinutes, topic } = await req.json();
+
+    // Validate required fields
+    if (!menteeId || !mentorId || !sessionTime || !durationMinutes || !topic) {
+      throw new Error('Missing required fields');
+    }
+
+    // Validate session time is in the future
+    const now = new Date();
+    const bookingTime = new Date(sessionTime);
+    if (bookingTime <= now) {
+      return new Response(
+        JSON.stringify({
+          error: 'Cannot book sessions in the past'
+        }), {
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          },
+          status: 400
+        }
+      );
+    }
+
+    // Calculate session end time
+    const sessionStart = new Date(sessionTime);
+    const sessionEnd = new Date(sessionStart.getTime() + durationMinutes * 60000);
+
+    // Check for existing mentee bookings in the same time slot
+    const { data: existingMenteeBookings, error: menteeBookingError } = await supabaseClient
+      .from('bookings')
+      .select('*')
+      .eq('mentee_id', menteeId)
+      .in('status', ['Pending', 'Confirmed'])
+      .or(
+        `and(session_time >= '${sessionStart.toISOString()}', session_time < '${sessionEnd.toISOString()}'),` +
+        `and(session_time <= '${sessionStart.toISOString()}', session_time + (duration_minutes || '60')::interval > '${sessionStart.toISOString()}')`
+      );
+
+    if (menteeBookingError) throw menteeBookingError;
+
+    if (existingMenteeBookings && existingMenteeBookings.length > 0) {
+      return new Response(
+        JSON.stringify({
+          error: 'You already have a session scheduled during this time slot'
+        }), {
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          },
+          status: 400
+        }
+      );
+    }
+
+    // Check for existing mentor bookings in the same time slot
+    const { data: existingMentorBookings, error: mentorBookingError } = await supabaseClient
+      .from('bookings')
+      .select('*')
+      .eq('mentor_id', mentorId)
+      .in('status', ['Pending', 'Confirmed'])
+      .or(
+        `and(session_time >= '${sessionStart.toISOString()}', session_time < '${sessionEnd.toISOString()}'),` +
+        `and(session_time <= '${sessionStart.toISOString()}', session_time + (duration_minutes || '60')::interval > '${sessionStart.toISOString()}')`
+      );
+
+    if (mentorBookingError) throw mentorBookingError;
+
+    if (existingMentorBookings && existingMentorBookings.length > 0) {
+      return new Response(
+        JSON.stringify({
+          error: 'The mentor is not available during this time slot'
+        }), {
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          },
+          status: 400
+        }
+      );
+    }
+
+    // Create booking
+    const { data: booking, error: bookingError } = await supabaseClient
+      .from('bookings')
+      .insert({
+        mentee_id: menteeId,
+        mentor_id: mentorId,
+        session_time: sessionTime,
+        duration_minutes: durationMinutes,
+        status: 'Pending'
+      })
+      .select(`
+        *,
+        mentee:users!bookings_mentee_id_fkey (
+          name
+        ),
+        mentor:users!bookings_mentor_id_fkey (
+          name
+        )
+      `)
+      .single();
+
+    if (bookingError) throw bookingError;
+
+    // Create notifications for both mentee and mentor
+    const notifications = [
+      {
+        user_id: mentorId,
+        message: `New session request from ${booking.mentee.name} for ${topic} on ${new Date(sessionTime).toLocaleString()}`,
+        type: 'Booking'
+      },
+      {
+        user_id: menteeId,
+        message: `Session request sent to ${booking.mentor.name} for ${topic}. Awaiting confirmation.`,
+        type: 'Booking'
+      }
+    ];
+
+    const { error: notificationError } = await supabaseClient
+      .from('notifications')
+      .insert(notifications);
+
+    if (notificationError) throw notificationError;
+
+    return new Response(
+      JSON.stringify({
+        booking
+      }), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        },
+        status: 200
+      }
+    );
+
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        error: error.message
+      }), {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        },
+        status: 400
+      }
+    );
+  }
+});

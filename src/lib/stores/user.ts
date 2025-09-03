@@ -360,11 +360,12 @@ export const userManager = {
   }
 };
 
-// Track if we're currently loading a profile and for which user
-let currentLoadingUserId: string | null = null;
-
-// Track the last loaded profile ID to prevent duplicate loads
-let lastLoadedProfileId: string | null = null;
+// Profile loading state management
+const profileLoadState = {
+  currentLoadingUserId: null as string | null,
+  lastLoadedProfileId: null as string | null,
+  loadPromise: null as Promise<any> | null
+};
 
 // Initialize user profile when auth user changes
 authUser.subscribe(async (currentUser) => {
@@ -373,60 +374,69 @@ authUser.subscribe(async (currentUser) => {
   
   if (userId) {
     // Skip if we've already loaded this profile
-    if (lastLoadedProfileId === userId) {
+    if (profileLoadState.lastLoadedProfileId === userId) {
       console.log('Profile already loaded for user:', userId);
       return;
     }
 
-    // Skip if we're already loading this profile
-    if (currentLoadingUserId === userId) {
+    // If there's an existing load in progress for this user, wait for it
+    if (profileLoadState.currentLoadingUserId === userId && profileLoadState.loadPromise) {
       console.log('Profile load already in progress for user:', userId);
+      await profileLoadState.loadPromise;
       return;
     }
 
     // Start loading the profile
-    currentLoadingUserId = userId;
+    profileLoadState.currentLoadingUserId = userId;
     console.log('Loading profile for user:', userId);
     
-    try {
-      userStore.update(state => ({ ...state, isLoading: true }));
-      const { data: profile, error } = await userManager.getProfile(userId);
-      
-      if (error) {
-        console.error('Failed to load profile:', error);
+    // Create a new load promise
+    profileLoadState.loadPromise = (async () => {
+      try {
+        userStore.update(state => ({ ...state, isLoading: true }));
+        const { data: profile, error } = await userManager.getProfile(userId);
+        
+        if (error) {
+          console.error('Failed to load profile:', error);
+          userStore.update(state => ({
+            ...state,
+            error: error instanceof Error ? error.message : 'Failed to load profile',
+            isLoading: false
+          }));
+        } else {
+          console.log('Profile loaded successfully:', profile?.name);
+          userStore.update(state => ({
+            ...state,
+            profile,
+            isMentor: profile?.is_mentor || false,
+            isLoading: false,
+            error: null
+          }));
+          profileLoadState.lastLoadedProfileId = userId;
+        }
+      } catch (error) {
+        console.error('Error in profile loading:', error);
         userStore.update(state => ({
           ...state,
-          error: error instanceof Error ? error.message : 'Failed to load profile',
-          isLoading: false
-        }));
-      } else {
-        console.log('Profile loaded successfully:', profile?.name);
-        userStore.update(state => ({
-          ...state,
-          profile,
-          isMentor: profile?.is_mentor || false,
           isLoading: false,
-          error: null
+          error: error instanceof Error ? error.message : 'Error loading profile'
         }));
-        lastLoadedProfileId = userId;
+      } finally {
+        // Only clear the loading state if we're still loading the same user
+        if (profileLoadState.currentLoadingUserId === userId) {
+          profileLoadState.currentLoadingUserId = null;
+          profileLoadState.loadPromise = null;
+        }
       }
-    } catch (error) {
-      console.error('Error in profile loading:', error);
-      userStore.update(state => ({
-        ...state,
-        isLoading: false,
-        error: error instanceof Error ? error.message : 'Error loading profile'
-      }));
-    } finally {
-      // Only clear the loading flag if we're still loading the same user
-      if (currentLoadingUserId === userId) {
-        currentLoadingUserId = null;
-      }
-    }
+    })();
+
+    // Wait for the load to complete
+    await profileLoadState.loadPromise;
   } else {
     console.log('No auth user, clearing user data');
-    currentLoadingUserId = null;
-    lastLoadedProfileId = null;
+    profileLoadState.currentLoadingUserId = null;
+    profileLoadState.lastLoadedProfileId = null;
+    profileLoadState.loadPromise = null;
     userManager.clearUserData();
   }
 });

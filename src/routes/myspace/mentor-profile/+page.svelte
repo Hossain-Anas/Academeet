@@ -6,6 +6,8 @@
 	import { auth, user } from '$lib/stores/auth';
 	import { supabase } from '$lib/supabaseClient.js';
 	import { onMount } from 'svelte';
+	import { HelpOfferController } from '$lib/controllers/helpOfferController';
+	import { toast } from '$lib/stores/toast';
 
 	interface MentorProfile {
 		name: string;
@@ -40,6 +42,12 @@
 	// Sessions data - initially empty
 	let sessions: any[] = [];
 	
+	// Mentor's sent offers
+	let mentorOffers: any[] = [];
+	let isLoadingOffers = false;
+	let selectedOffer: any = null;
+	let showOfferDialog = false;
+	
 	// Show loading until component is mounted
 	$: showContent = isMounted;
 
@@ -52,6 +60,79 @@
 	let showStatusDialog = false;
 	let selectedSession: any = null;
 	let showSessionDialog = false;
+
+	// Convert UTC to Bangladesh time
+	function utcToBD(utcDateTime: string): string {
+		if (!utcDateTime || utcDateTime === 'null' || utcDateTime === 'undefined') {
+			return 'Not specified';
+		}
+		
+		try {
+			const date = new Date(utcDateTime);
+			if (isNaN(date.getTime())) {
+				return 'Invalid date';
+			}
+			
+			const formatter = new Intl.DateTimeFormat('en-US', {
+				timeZone: 'Asia/Dhaka',
+				year: 'numeric',
+				month: 'numeric',
+				day: 'numeric',
+				hour: '2-digit',
+				minute: '2-digit',
+				hour12: true
+			});
+			
+			return formatter.format(date)
+				.replace(' AM', ' AM BDT')
+				.replace(' PM', ' PM BDT');
+		} catch (error) {
+			return 'Invalid date';
+		}
+	}
+
+	// Load mentor's sent offers
+	async function loadMentorOffers() {
+		if (!$user?.id) return;
+		
+		try {
+			isLoadingOffers = true;
+			const offers = await HelpOfferController.getHelpOffersByMentor($user.id);
+			
+			// Fetch request details for each offer
+			const offersWithRequests = await Promise.all(
+				offers.map(async (offer) => {
+					try {
+						const { data: requestData, error } = await supabase
+							.from('help_requests')
+							.select(`
+								*,
+								mentee:users!help_requests_mentee_id_fkey(*)
+							`)
+							.eq('request_id', offer.request_id)
+							.single();
+						
+						if (error) {
+							console.error('Error fetching request for offer:', offer.offer_id, error);
+							return { ...offer, request: null };
+						}
+						
+						return { ...offer, request: requestData };
+					} catch (error) {
+						console.error('Error fetching request details:', error);
+						return { ...offer, request: null };
+					}
+				})
+			);
+			
+			mentorOffers = offersWithRequests;
+		} catch (error) {
+			console.error('Error loading mentor offers:', error);
+			toast.show('Failed to load offers', 'error');
+		} finally {
+			isLoadingOffers = false;
+		}
+	}
 
 	// Mentor application variables
 	let showMentorDialog = false;
@@ -170,6 +251,9 @@
 		
 		// Mark component as mounted
 		isMounted = true;
+		
+		// Load mentor offers
+		loadMentorOffers();
 		
 		// Return cleanup function
 		return () => {
@@ -670,6 +754,79 @@
 		</div>
 	</div>
 
+	<!-- My Sent Offers Section -->
+	<div class="bg-white rounded-lg shadow-md p-6 mb-8">
+		<h2 class="text-xl font-semibold text-gray-900 mb-4">My Sent Offers</h2>
+		
+		{#if isLoadingOffers}
+			<div class="text-center py-8">
+				<div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+				<p class="mt-2 text-gray-600">Loading offers...</p>
+			</div>
+		{:else if mentorOffers.length === 0}
+			<div class="text-center py-8 text-gray-500">
+				<p>You haven't sent any offers yet.</p>
+				<a href="/requests" class="text-blue-600 hover:text-blue-800 underline">Browse requests to make offers</a>
+			</div>
+		{:else}
+			<div class="max-h-96 overflow-y-auto space-y-3 pr-2">
+				{#each mentorOffers as offer}
+					<div 
+						class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+						role="button"
+						tabindex="0"
+						onclick={() => {
+							selectedOffer = offer;
+							showOfferDialog = true;
+						}}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								selectedOffer = offer;
+								showOfferDialog = true;
+							}
+						}}
+					>
+						<div class="flex justify-between items-start">
+							<div class="flex-1">
+								<h3 class="text-lg font-semibold text-gray-900 mb-1">{offer.request?.title || 'Request Title'}</h3>
+								<div class="flex items-center space-x-4 text-sm text-gray-600 mb-2">
+									<span class="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+										{offer.request?.course_code || 'Course'}
+									</span>
+									<span class="bg-purple-100 text-purple-800 px-2 py-1 rounded-full text-xs font-medium">
+										{offer.status}
+									</span>
+									<span class="text-lg font-bold text-green-600">Tk {offer.proposed_fee || 'Not specified'}</span>
+								</div>
+								<p class="text-gray-700 mb-2 line-clamp-2">{offer.message || 'No message provided'}</p>
+								<div class="text-sm text-gray-600">
+									<span class="font-medium">To:</span> {offer.request?.mentee?.name || 'Anonymous'}
+									{#if offer.proposed_time}
+										<span class="ml-4 font-medium">Offered Time:</span> {utcToBD(offer.proposed_time)}
+									{/if}
+								</div>
+							</div>
+							<div class="text-right">
+								<div class="text-xs text-gray-500">
+									{utcToBD(offer.created_at)}
+								</div>
+								<div class="mt-2">
+									<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+										{offer.status === 'Accepted' ? 'bg-green-100 text-green-800' : 
+										 offer.status === 'Declined' ? 'bg-red-100 text-red-800' : 
+										 offer.status === 'Withdrawn' ? 'bg-gray-100 text-gray-800' : 
+										 'bg-yellow-100 text-yellow-800'}">
+										{offer.status}
+									</span>
+								</div>
+							</div>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+
 	<!-- Search and Sort Section -->
 	<div class="bg-white rounded-lg shadow-md p-6 mb-8">
 		<h2 class="text-xl font-semibold text-gray-900 mb-4">Sort by + search bar</h2>
@@ -1042,6 +1199,136 @@
 				<div class="flex justify-end">
 					<Dialog.Close>
 						<Button>Start Mentoring</Button>
+					</Dialog.Close>
+				</div>
+			</Dialog.Content>
+		</Dialog.Root>
+	{/if}
+
+	<!-- Offer Details Dialog -->
+	{#if showOfferDialog && selectedOffer}
+		<Dialog.Root open={showOfferDialog} onOpenChange={(open) => showOfferDialog = open}>
+			<Dialog.Content class="max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+				<Dialog.Header>
+					<Dialog.Title>Offer Details</Dialog.Title>
+					<Dialog.Description>
+						View details of your sent offer and its current status.
+					</Dialog.Description>
+				</Dialog.Header>
+				
+				<div class="space-y-4">
+					<!-- Request Information -->
+					<div class="bg-gray-50 rounded-lg p-4">
+						<h3 class="text-lg font-semibold text-gray-900 mb-3">Request Information</h3>
+						<div class="space-y-3">
+							<div>
+								<span class="text-sm font-medium text-gray-700">Title:</span>
+								<p class="text-sm text-gray-900 mt-1">{selectedOffer.request?.title || 'Request Title'}</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Course:</span>
+								<p class="text-sm text-gray-900 mt-1">{selectedOffer.request?.course_code || 'Course Code'}</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Mentee:</span>
+								<p class="text-sm text-gray-900 mt-1">{selectedOffer.request?.mentee?.name || 'Anonymous'}</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Request Budget:</span>
+								<p class="text-sm text-gray-900 mt-1">Tk {selectedOffer.request?.budget || 'Not specified'}</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Description:</span>
+								<p class="text-sm text-gray-900 mt-1">{selectedOffer.request?.description || 'No description provided'}</p>
+							</div>
+						</div>
+					</div>
+
+					<!-- Offer Information -->
+					<div class="bg-blue-50 rounded-lg p-4">
+						<h3 class="text-lg font-semibold text-gray-900 mb-3">Your Offer</h3>
+						<div class="space-y-3">
+							<div>
+								<span class="text-sm font-medium text-gray-700">Offered Amount:</span>
+								<p class="text-lg font-bold text-green-600 mt-1">Tk {selectedOffer.proposed_fee || 'Not specified'}</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Status:</span>
+								<div class="mt-1">
+									<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+										{selectedOffer.status === 'Accepted' ? 'bg-green-100 text-green-800' : 
+										 selectedOffer.status === 'Declined' ? 'bg-red-100 text-red-800' : 
+										 selectedOffer.status === 'Withdrawn' ? 'bg-gray-100 text-gray-800' : 
+										 'bg-yellow-100 text-yellow-800'}">
+										{selectedOffer.status}
+									</span>
+								</div>
+							</div>
+							{#if selectedOffer.proposed_time}
+								<div>
+									<span class="text-sm font-medium text-gray-700">Offered Time:</span>
+									<p class="text-sm text-gray-900 mt-1">{utcToBD(selectedOffer.proposed_time)}</p>
+								</div>
+							{/if}
+							<div>
+								<span class="text-sm font-medium text-gray-700">Sent:</span>
+								<p class="text-sm text-gray-900 mt-1">{utcToBD(selectedOffer.created_at)}</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Message:</span>
+								<p class="text-sm text-gray-900 mt-1">{selectedOffer.message || 'No message provided'}</p>
+							</div>
+						</div>
+					</div>
+
+					<!-- Actions -->
+					{#if selectedOffer.status === 'Pending'}
+						<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+							<p class="text-yellow-800 text-sm">
+								This offer is pending review by the mentee. You can withdraw it if needed.
+							</p>
+							<div class="mt-3">
+								<Button 
+									variant="outline" 
+									onclick={async () => {
+										try {
+											if (!$user?.id) {
+												toast.show('User not authenticated', 'error');
+												return;
+											}
+											await HelpOfferController.withdrawHelpOffer(selectedOffer.offer_id, $user.id);
+											toast.show('Offer withdrawn successfully', 'success');
+											await loadMentorOffers();
+											showOfferDialog = false;
+										} catch (error) {
+											console.error('Error withdrawing offer:', error);
+											toast.show('Failed to withdraw offer', 'error');
+										}
+									}}
+									class="text-red-600 border-red-300 hover:bg-red-50"
+								>
+									Withdraw Offer
+								</Button>
+							</div>
+						</div>
+					{:else if selectedOffer.status === 'Accepted'}
+						<div class="bg-green-50 border border-green-200 rounded-lg p-4">
+							<p class="text-green-800 text-sm">
+								🎉 Great! This offer has been accepted. You can now proceed with the mentoring session.
+							</p>
+						</div>
+					{:else if selectedOffer.status === 'Declined'}
+						<div class="bg-red-50 border border-red-200 rounded-lg p-4">
+							<p class="text-red-800 text-sm">
+								This offer was declined by the mentee. You can make a new offer if the request is still open.
+							</p>
+						</div>
+					{/if}
+				</div>
+				
+				<div class="flex justify-end mt-6">
+					<Dialog.Close>
+						<Button variant="outline">Close</Button>
 					</Dialog.Close>
 				</div>
 			</Dialog.Content>

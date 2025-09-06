@@ -58,9 +58,6 @@ export class HelpRequestController {
         budget: budget || null
       });
 
-      // Send notification to all mentors about new request
-      await this.notifyMentorsOfNewRequest(helpRequest.toJSON());
-
       return helpRequest.toJSON();
     } catch (error) {
       console.error('Create help request error:', error);
@@ -203,31 +200,4 @@ export class HelpRequestController {
     }
   }
 
-  // Notify mentors of new help request
-  private static async notifyMentorsOfNewRequest(helpRequest: HelpRequestData): Promise<void> {
-    try {
-      // Get all mentors
-      const { data: mentors, error } = await supabase
-        .from('users')
-        .select('user_id')
-        .eq('is_mentor', true);
-
-      if (error) throw error;
-
-      // Create notifications for all mentors
-      const notifications = mentors.map((mentor: any) => ({
-        user_id: mentor.user_id,
-        message: `New help request: "${helpRequest.title}" - ${helpRequest.description?.substring(0, 100) || ''}...`,
-        type: 'Request' as const
-      }));
-
-      // Batch insert notifications
-      for (const notification of notifications) {
-        await Notification.create(notification);
-      }
-    } catch (error) {
-      console.error('Notify mentors error:', error);
-      // Don't throw error as this is not critical
-    }
-  }
 }

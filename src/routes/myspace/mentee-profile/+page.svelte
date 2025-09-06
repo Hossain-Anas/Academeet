@@ -6,6 +6,9 @@
 	import { auth, user } from '$lib/stores/auth';
 	import { supabase } from '$lib/supabaseClient.js';
 	import { onMount } from 'svelte';
+	import { HelpRequestController } from '$lib/controllers/helpRequestController';
+	import { HelpOfferController } from '$lib/controllers/helpOfferController';
+	import { toast } from '$lib/stores/toast';
 
 	// Basic mentee profile data - will be populated from userStore
 	let menteeProfile = {
@@ -62,6 +65,66 @@
 		}
 	];
 
+	// Mentee's posted requests with offers
+	let menteeRequests: any[] = [];
+	let isLoadingRequests = false;
+	let selectedRequest: any = null;
+	let showRequestDialog = false;
+
+	// Convert UTC to Bangladesh time
+	function utcToBD(utcDateTime: string): string {
+		if (!utcDateTime || utcDateTime === 'null' || utcDateTime === 'undefined') {
+			return 'Not specified';
+		}
+		
+		try {
+			const date = new Date(utcDateTime);
+			if (isNaN(date.getTime())) {
+				return 'Invalid date';
+			}
+			
+			const formatter = new Intl.DateTimeFormat('en-US', {
+				timeZone: 'Asia/Dhaka',
+				year: 'numeric',
+				month: 'numeric',
+				day: 'numeric',
+				hour: '2-digit',
+				minute: '2-digit',
+				hour12: true
+			});
+			
+			return formatter.format(date)
+				.replace(' AM', ' AM BDT')
+				.replace(' PM', ' PM BDT');
+		} catch (error) {
+			return 'Invalid date';
+		}
+	}
+
+	// Load mentee's requests with offers
+	async function loadMenteeRequests() {
+		if (!$user?.id) return;
+		
+		try {
+			isLoadingRequests = true;
+			const requests = await HelpRequestController.getHelpRequestsByMentee($user.id);
+			
+			// Load offers for each request
+			menteeRequests = await Promise.all(requests.map(async (request) => {
+				const offers = await HelpOfferController.getHelpOffersByRequest(request.request_id!);
+				return {
+					...request,
+					offers: offers
+				};
+			}));
+		} catch (error) {
+			console.error('Error loading mentee requests:', error);
+			toast.show('Failed to load requests', 'error');
+		} finally {
+			isLoadingRequests = false;
+		}
+	}
+
 	// Show loading until component is mounted
 	$: showContent = isMounted;
 
@@ -77,6 +140,7 @@
 	// Initialize profile data from userStore
 	onMount(() => {
 		console.log('Mentee profile page mounted');
+		loadMenteeRequests();
 		
 		// Mark component as mounted
 		isMounted = true;
@@ -517,6 +581,103 @@
 		</div>
 	</div>
 
+	<!-- My Posted Requests Section -->
+	<div class="bg-white rounded-lg shadow-md p-6 mb-8">
+		<h2 class="text-xl font-semibold text-gray-900 mb-4">My Posted Requests</h2>
+		
+		{#if isLoadingRequests}
+			<div class="text-center py-8">
+				<div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+				<p class="mt-2 text-gray-600">Loading requests...</p>
+			</div>
+		{:else if menteeRequests.length === 0}
+			<div class="text-center py-8 text-gray-500">
+				<p>You haven't posted any requests yet.</p>
+				<a href="/requests" class="text-blue-600 hover:text-blue-800 underline">Post your first request</a>
+			</div>
+		{:else}
+			<div class="max-h-96 overflow-y-auto space-y-3 pr-2">
+				{#each menteeRequests as request}
+					<div 
+						class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+						role="button"
+						tabindex="0"
+						onclick={() => {
+							selectedRequest = request;
+							showRequestDialog = true;
+						}}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								selectedRequest = request;
+								showRequestDialog = true;
+							}
+						}}
+					>
+						<div class="flex justify-between items-start">
+							<div class="flex-1">
+								<h3 class="text-lg font-semibold text-gray-900 mb-1">{request.title}</h3>
+								<div class="flex items-center space-x-4 text-sm text-gray-600 mb-2">
+									<span class="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+										{request.course_code}
+									</span>
+									<span class="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium">
+										{request.status}
+									</span>
+									<span class="text-lg font-bold text-green-600">Tk {request.budget}</span>
+								</div>
+								<p class="text-gray-700 mb-2 line-clamp-2">{request.description}</p>
+								<div class="text-sm text-gray-600">
+									<span class="font-medium">Offers:</span> {request.offers?.length || 0}
+									{#if request.preferred_time}
+										<span class="ml-4 font-medium">Preferred Time:</span> {utcToBD(request.preferred_time)}
+									{/if}
+								</div>
+							</div>
+							<div class="text-right">
+								<div class="text-xs text-gray-500">
+									{utcToBD(request.created_at)}
+								</div>
+								{#if request.offers?.length > 0}
+									<div class="mt-2">
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+											{request.offers.length} offer{request.offers.length > 1 ? 's' : ''}
+										</span>
+									</div>
+								{/if}
+								<div class="mt-2">
+									<button 
+										class="text-red-600 hover:text-red-800 text-xs px-2 py-1 rounded hover:bg-red-50 transition-colors"
+										onclick={(e) => {
+											e.stopPropagation();
+											if (confirm('Are you sure you want to delete this request? This action cannot be undone and will also delete all associated offers.')) {
+												(async () => {
+													try {
+														if (!$user?.id) {
+															toast.show('User not authenticated', 'error');
+															return;
+														}
+														await HelpRequestController.deleteHelpRequest(request.request_id, $user.id);
+														toast.show('Request deleted successfully', 'success');
+														loadMenteeRequests();
+													} catch (error) {
+														console.error('Error deleting request:', error);
+														toast.show('Failed to delete request', 'error');
+													}
+												})();
+											}
+										}}
+									>
+										🗑️ Delete
+									</button>
+								</div>
+							</div>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+
 	<!-- Search and Sort Section -->
 	<div class="bg-white rounded-lg shadow-md p-6 mb-8">
 		<h2 class="text-xl font-semibold text-gray-900 mb-4">Sort by + search bar</h2>
@@ -596,6 +757,158 @@
 			</div>
 		{/if}
 	</div>
+
+
+	<!-- Request Details Dialog -->
+	{#if showRequestDialog && selectedRequest}
+		<Dialog.Root open={showRequestDialog} onOpenChange={(open) => showRequestDialog = open}>
+			<Dialog.Content class="max-w-4xl w-full">
+				<Dialog.Header>
+					<Dialog.Title>Request Details: {selectedRequest.title}</Dialog.Title>
+					<Dialog.Description>
+						Manage offers and interactions for this request
+					</Dialog.Description>
+				</Dialog.Header>
+				
+				<div class="space-y-6">
+					<!-- Request Info -->
+					<div class="bg-gray-50 rounded-lg p-4">
+						<h3 class="font-semibold text-gray-900 mb-2">Request Information</h3>
+						<div class="grid grid-cols-2 gap-4 text-sm">
+							<div>
+								<span class="font-medium">Course:</span> {selectedRequest.course_code}
+							</div>
+							<div>
+								<span class="font-medium">Budget:</span> Tk {selectedRequest.budget}
+							</div>
+							<div>
+								<span class="font-medium">Status:</span> 
+								<span class="ml-1 px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
+									{selectedRequest.status}
+								</span>
+							</div>
+							<div>
+								<span class="font-medium">Preferred Time:</span> 
+								{selectedRequest.preferred_time ? utcToBD(selectedRequest.preferred_time) : 'Not specified'}
+							</div>
+						</div>
+						<div class="mt-3">
+							<span class="font-medium">Description:</span>
+							<p class="text-gray-700 mt-1">{selectedRequest.description}</p>
+						</div>
+					</div>
+
+					<!-- Offers Section -->
+					<div>
+						<h3 class="font-semibold text-gray-900 mb-3">Offers ({selectedRequest.offers?.length || 0})</h3>
+						
+						{#if selectedRequest.offers?.length === 0}
+							<div class="text-center py-8 text-gray-500">
+								<p>No offers yet. Your request is visible to all mentors.</p>
+							</div>
+						{:else}
+							<div class="space-y-3">
+								{#each selectedRequest.offers as offer}
+									<div class="border border-gray-200 rounded-lg p-4">
+										<div class="flex justify-between items-start mb-3">
+											<div>
+												<h4 class="font-medium text-gray-900">Offer from Mentor</h4>
+												<p class="text-sm text-gray-600">Status: 
+													<span class="ml-1 px-2 py-1 rounded-full text-xs {
+														offer.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
+														offer.status === 'Accepted' ? 'bg-green-100 text-green-800' :
+														'bg-red-100 text-red-800'
+													}">
+														{offer.status}
+													</span>
+												</p>
+											</div>
+											<div class="text-right">
+												{#if offer.proposed_fee}
+													<div class="text-lg font-bold text-green-600">Tk {offer.proposed_fee}</div>
+												{/if}
+												{#if offer.proposed_time}
+													<div class="text-sm text-gray-600">{utcToBD(offer.proposed_time)}</div>
+												{/if}
+											</div>
+										</div>
+										
+										<p class="text-gray-700 mb-3">{offer.message}</p>
+										
+										{#if offer.status === 'Pending'}
+											<div class="flex gap-2">
+												<button 
+													class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+													onclick={async () => {
+														try {
+															await HelpOfferController.acceptHelpOffer(offer.offer_id, $user?.id!);
+															toast.show('Offer accepted successfully!', 'success');
+															loadMenteeRequests();
+															showRequestDialog = false;
+														} catch (error) {
+															toast.show('Failed to accept offer', 'error');
+														}
+													}}
+												>
+													Accept Offer
+												</button>
+												<button 
+													class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+													onclick={async () => {
+														try {
+															await HelpOfferController.declineHelpOffer(offer.offer_id, $user?.id!);
+															toast.show('Offer declined', 'success');
+															loadMenteeRequests();
+															showRequestDialog = false;
+														} catch (error) {
+															toast.show('Failed to decline offer', 'error');
+														}
+													}}
+												>
+													Decline Offer
+												</button>
+											</div>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				</div>
+				
+				<div class="flex justify-between mt-6">
+					<!-- Delete Request Button -->
+					<button 
+						class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+						onclick={async () => {
+							if (confirm('Are you sure you want to delete this request? This action cannot be undone and will also delete all associated offers.')) {
+								try {
+									if (!$user?.id) {
+										toast.show('User not authenticated', 'error');
+										return;
+									}
+									await HelpRequestController.deleteHelpRequest(selectedRequest.request_id, $user.id);
+									toast.show('Request deleted successfully', 'success');
+									loadMenteeRequests();
+									showRequestDialog = false;
+								} catch (error) {
+									console.error('Error deleting request:', error);
+									toast.show('Failed to delete request', 'error');
+								}
+							}
+						}}
+					>
+						🗑️ Delete Request
+					</button>
+					
+					<!-- Close Button -->
+					<Dialog.Close>
+						<Button variant="outline">Close</Button>
+					</Dialog.Close>
+				</div>
+			</Dialog.Content>
+		</Dialog.Root>
+	{/if}
 
 	<!-- Status Dialog -->
 	{#if showStatusDialog}

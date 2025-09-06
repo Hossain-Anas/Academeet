@@ -12,3 +12,5 @@ export const SUPABASE_ANON_KEY = browser
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   throw new Error('Missing Supabase environment variables. Please check your .env.local file.');
 }
+
+

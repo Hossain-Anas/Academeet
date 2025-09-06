@@ -3,6 +3,9 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { isMentorMode } from '$lib/stores/roleToggle.js';
+	import { HelpRequestController } from '$lib/controllers/helpRequestController';
+	import { toast } from '$lib/stores/toast';
+	import { supabase } from '$lib/supabaseClient';
 
 	// Form data for posting new request
 	let formData = {
@@ -13,49 +16,144 @@
 		budget: ''
 	};
 
+	// Loading states
+	let isSubmitting = false;
+
+	// Get current user
+	async function getCurrentUserId() {
+		const { data: { user } } = await supabase.auth.getUser();
+		return user?.id;
+	}
+
+	// Convert UTC to Bangladesh time (same as myspace page)
+	function utcToBD(utcDateTime: string): string {
+		if (!utcDateTime || utcDateTime === 'null' || utcDateTime === 'undefined') {
+			return 'Not specified';
+		}
+		
+		try {
+			// Parse the UTC time - handle different formats from Supabase
+			let date: Date;
+			
+			// Handle different Supabase date formats
+			if (utcDateTime.includes('+00:00')) {
+				// Format: "2025-09-06T13:15:46.603877+00:00" - already ISO format
+				date = new Date(utcDateTime);
+			} else if (utcDateTime.includes('+00')) {
+				// Format: "2025-09-06 20:10:00+00" - convert to ISO format
+				date = new Date(utcDateTime.replace(' ', 'T').replace('+00', 'Z'));
+			} else {
+				// Standard ISO format
+				date = new Date(utcDateTime);
+			}
+			
+			// Check if date is valid
+			if (isNaN(date.getTime())) {
+				console.warn('Invalid date:', utcDateTime);
+				return 'Invalid date';
+			}
+			
+			console.log('Parsing time:', utcDateTime, '->', date.toISOString());
+			
+			// Create a formatter for Bangladesh time
+			const formatter = new Intl.DateTimeFormat('en-US', {
+				timeZone: 'Asia/Dhaka',
+				year: 'numeric',
+				month: 'numeric',
+				day: 'numeric',
+				hour: '2-digit',
+				minute: '2-digit',
+				hour12: true // Use 12-hour format with AM/PM
+			});
+			
+			// Format the date and replace the timezone name with BDT
+			return formatter.format(date)
+				.replace(' AM', ' AM BDT')
+				.replace(' PM', ' PM BDT');
+		} catch (error) {
+			console.error('Error formatting date:', utcDateTime, error);
+			return 'Invalid date';
+		}
+	}
+
 	// Search and filter
 	let searchQuery = '';
 	let sortBy = 'newest';
 
-	// Sample request data (replace with real data later)
-	let requests = [
-		{
-			id: '1',
-			title: 'Help with Data Structures Assignment',
-			course_code: 'CSE201',
-			description: 'I need help understanding binary trees and implementing them in Java. The assignment is due next week.',
-			preferred_time: '2024-01-15T14:00',
-			budget: 25.00,
-			status: 'Open',
-			created_at: '2024-01-10T10:30:00',
-			mentee_name: 'Alice Johnson',
-			department: 'Computer Science'
-		},
-		{
-			id: '2',
-			title: 'Calculus II Integration Problems',
-			course_code: 'MATH202',
-			description: 'Struggling with integration by parts and trigonometric substitution. Need step-by-step explanations.',
-			preferred_time: '2024-01-16T16:00',
-			budget: 30.00,
-			status: 'Open',
-			created_at: '2024-01-11T09:15:00',
-			mentee_name: 'Bob Smith',
-			department: 'Mathematics'
-		},
-		{
-			id: '3',
-			title: 'Web Development Project Review',
-			course_code: 'CSE301',
-			description: 'Need someone to review my React project and provide feedback on code structure and best practices.',
-			preferred_time: '2024-01-17T13:00',
-			budget: 40.00,
-			status: 'Open',
-			created_at: '2024-01-12T14:20:00',
-			mentee_name: 'Carol Davis',
-			department: 'Computer Science'
+	import { onMount } from 'svelte';
+	import { HelpOfferController } from '$lib/controllers/helpOfferController';
+
+	// Request data state
+	let requests: any[] = [];
+	let isLoading = true;
+	let error: string | null = null;
+
+	// Offer form state
+	let isSubmittingOffer = false;
+	let dialogOpen = false;
+	let offerData = {
+		message: '',
+		proposed_time: '',
+		proposed_fee: ''
+	};
+
+	// Load help requests - bulletproof version
+	async function loadHelpRequests() {
+		console.log('Starting loadHelpRequests...');
+		try {
+			isLoading = true;
+			error = null;
+			
+			console.log('Making Supabase query...');
+			// Very simple query - just get help requests without joins
+			const { data, error: supabaseError } = await supabase
+				.from('help_requests')
+				.select('*')
+				.eq('status', 'Open')
+				.order('created_at', { ascending: false });
+			
+			console.log('Supabase response:', { data, supabaseError });
+			
+			if (supabaseError) {
+				console.error('Supabase error:', supabaseError);
+				throw supabaseError;
+			}
+			
+			// Add mock user data for display
+			requests = (data || []).map(request => ({
+				...request,
+				mentee_name: 'Anonymous User', // We'll get real names later
+				department: 'Unknown'
+			}));
+			
+			console.log('Final requests:', requests);
+			
+		} catch (err) {
+			console.error('Error loading help requests:', err);
+			error = err instanceof Error ? err.message : 'Failed to load help requests';
+			toast.show(error, 'error');
+			
+			// Set empty array as fallback
+			requests = [];
+		} finally {
+			isLoading = false;
+			console.log('Finished loading, isLoading:', isLoading);
 		}
-	];
+	}
+
+	onMount(() => {
+		loadHelpRequests();
+		
+		// Safety timeout - if loading takes more than 10 seconds, stop loading
+		setTimeout(() => {
+			if (isLoading) {
+				console.log('Loading timeout reached, forcing stop');
+				isLoading = false;
+				error = 'Loading timeout - please refresh the page';
+				requests = [];
+			}
+		}, 10000);
+	});
 
 	// Filtered requests based on search
 	$: filteredRequests = requests.filter(request => {
@@ -85,17 +183,67 @@
 		}
 	});
 
-	function handleSubmit() {
-		// TODO: Submit to backend
-		console.log('Submitting request:', formData);
-		// Reset form
-		formData = {
-			title: '',
-			course_code: '',
-			description: '',
-			preferred_time: '',
-			budget: ''
-		};
+	async function handleSubmit() {
+		try {
+			isSubmitting = true;
+			const userId = await getCurrentUserId();
+			
+			if (!userId) {
+				toast.show('Please sign in to post a request', 'error');
+				return;
+			}
+
+			// Convert budget to number if provided
+			const budget = formData.budget ? parseFloat(formData.budget) : undefined;
+
+			// Handle preferred_time - convert from local time to UTC for storage
+			let preferredTimeUTC = undefined;
+			if (formData.preferred_time) {
+				// datetime-local gives us a string like "2025-09-07T09:30"
+				// This is already in local time (Bangladesh time)
+				// We need to convert it to UTC for storage
+				const localDate = new Date(formData.preferred_time);
+				
+				// Convert to UTC (JavaScript handles timezone conversion automatically)
+				preferredTimeUTC = localDate.toISOString();
+				console.log('Original local time:', formData.preferred_time);
+				console.log('Local date object:', localDate.toString());
+				console.log('Converted to UTC:', preferredTimeUTC);
+			}
+
+			// Create help request
+			await HelpRequestController.createHelpRequest({
+				mentee_id: userId,
+				title: formData.title,
+				course_code: formData.course_code || undefined,
+				description: formData.description,
+				preferred_time: preferredTimeUTC,
+				budget: budget
+			});
+
+			// Show success message
+			toast.show('Help request posted successfully!', 'success');
+
+			// Reset form
+			formData = {
+				title: '',
+				course_code: '',
+				description: '',
+				preferred_time: '',
+				budget: ''
+			};
+
+			// Simple page reload to show updated data
+			setTimeout(() => {
+				window.location.reload();
+			}, 1000);
+		} catch (error: unknown) {
+			console.error('Error posting help request:', error);
+			const errorMessage = error instanceof Error ? error.message : 'Failed to post help request';
+			toast.show(errorMessage, 'error');
+		} finally {
+			isSubmitting = false;
+		}
 	}
 
 	function clearSearch() {
@@ -175,9 +323,14 @@
 				<div class="flex justify-end">
 					<button
 						type="submit"
-						class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+						class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-blue-400 disabled:cursor-not-allowed"
+						disabled={isSubmitting}
 					>
-						Post Request
+						{#if isSubmitting}
+							Posting...
+						{:else}
+							Post Request
+						{/if}
 					</button>
 				</div>
 			</form>
@@ -228,7 +381,22 @@
 	<div class="bg-white rounded-lg shadow-md p-6">
 		<h2 class="text-xl font-semibold text-gray-900 mb-4">List of Posted Requests by Other Users</h2>
 		
-		{#if sortedRequests.length === 0}
+		{#if isLoading}
+			<div class="text-center py-8">
+				<div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+				<p class="mt-2 text-gray-600">Loading requests...</p>
+			</div>
+		{:else if error}
+			<div class="text-center py-8 text-red-500">
+				<p>{error}</p>
+				<button 
+					class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+					on:click={loadHelpRequests}
+				>
+					Try Again
+				</button>
+			</div>
+		{:else if sortedRequests.length === 0}
 			<div class="text-center py-8 text-gray-500">
 				<p>No requests found matching your search.</p>
 			</div>
@@ -253,7 +421,7 @@
 							<div class="text-right">
 								<div class="text-lg font-bold text-green-600">Tk {request.budget}</div>
 								<div class="text-xs text-gray-500">
-									{new Date(request.created_at).toLocaleDateString()}
+									{request.created_at ? utcToBD(request.created_at) : 'Unknown'}
 								</div>
 							</div>
 						</div>
@@ -263,7 +431,7 @@
 						<div class="flex items-center justify-between text-sm text-gray-600">
 							<div>
 								<span class="font-medium">Preferred Time:</span>
-								{new Date(request.preferred_time).toLocaleString()}
+								{request.preferred_time ? utcToBD(request.preferred_time) : 'Not specified'}
 							</div>
 							
 							{#if !$isMentorMode}
@@ -274,7 +442,7 @@
 									Book Session
 								</button>
 							{:else}
-								<Dialog.Root>
+								<Dialog.Root bind:open={dialogOpen}>
 									<Dialog.Trigger>
 										<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
 											Make Offer
@@ -287,13 +455,61 @@
 												Submit your offer for this request.
 											</Dialog.Description>
 										</Dialog.Header>
-										<div class="space-y-4">
+										<form 
+											on:submit|preventDefault={async () => {
+												try {
+													isSubmittingOffer = true;
+													const userId = await getCurrentUserId();
+													
+													if (!userId) {
+														toast.show('Please sign in to make an offer', 'error');
+														return;
+													}
+
+													// Handle proposed_time - convert from local time to UTC for storage
+													let proposedTimeUTC = undefined;
+													if (offerData.proposed_time) {
+														// datetime-local gives us local time, convert to UTC
+														const localDate = new Date(offerData.proposed_time);
+														proposedTimeUTC = localDate.toISOString();
+														console.log('Offer original time:', offerData.proposed_time);
+														console.log('Offer converted to UTC:', proposedTimeUTC);
+													}
+
+													await HelpOfferController.createHelpOffer({
+														request_id: request.request_id,
+														mentor_id: userId,
+														message: offerData.message,
+														proposed_time: proposedTimeUTC,
+														proposed_fee: offerData.proposed_fee ? parseFloat(offerData.proposed_fee) : undefined
+													});
+
+													toast.show('Offer submitted successfully!', 'success');
+													offerData = { message: '', proposed_time: '', proposed_fee: '' };
+													dialogOpen = false;
+													
+													// Simple page reload to show updated data
+													setTimeout(() => {
+														window.location.reload();
+													}, 1000);
+												} catch (error) {
+													console.error('Error submitting offer:', error);
+													const errorMessage = error instanceof Error ? error.message : 'Failed to submit offer';
+													toast.show(errorMessage, 'error');
+												} finally {
+													isSubmittingOffer = false;
+												}
+											}}
+											class="space-y-4"
+										>
 											<div>
-												<Label for="offer_message" class="text-sm font-medium">Message</Label>
+												<Label for="offer_message" class="text-sm font-medium">Message *</Label>
 												<textarea
 													id="offer_message"
+													bind:value={offerData.message}
 													rows="3"
 													placeholder="Describe how you can help..."
+													required
 													class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
 												></textarea>
 											</div>
@@ -303,6 +519,7 @@
 													<Input
 														id="proposed_time"
 														type="datetime-local"
+														bind:value={offerData.proposed_time}
 														class="mt-1"
 													/>
 												</div>
@@ -311,6 +528,7 @@
 													<Input
 														id="proposed_fee"
 														type="number"
+														bind:value={offerData.proposed_fee}
 														placeholder="0.00"
 														min="0"
 														step="0.01"
@@ -318,17 +536,29 @@
 													/>
 												</div>
 											</div>
-										</div>
-										<div class="flex justify-end space-x-2 mt-6">
-											<Dialog.Close>
-												<button class="px-4 py-2 text-gray-600 hover:text-gray-800">
-													Cancel
+											<div class="flex justify-end space-x-2 mt-6">
+												<Dialog.Close>
+													<button 
+														type="button"
+														class="px-4 py-2 text-gray-600 hover:text-gray-800"
+														disabled={isSubmittingOffer}
+													>
+														Cancel
+													</button>
+												</Dialog.Close>
+												<button 
+													type="submit"
+													class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
+													disabled={isSubmittingOffer}
+												>
+													{#if isSubmittingOffer}
+														Submitting...
+													{:else}
+														Submit Offer
+													{/if}
 												</button>
-											</Dialog.Close>
-											<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-												Submit Offer
-											</button>
-										</div>
+											</div>
+										</form>
 									</Dialog.Content>
 								</Dialog.Root>
 							{/if}

@@ -6,6 +6,7 @@
 	import { HelpRequestController } from '$lib/controllers/helpRequestController';
 	import { toast } from '$lib/stores/toast';
 	import { supabase } from '$lib/supabaseClient';
+	import { user } from '$lib/stores/auth';
 
 	// Form data for posting new request
 	let formData = {
@@ -444,8 +445,12 @@
 							{:else}
 								<Dialog.Root bind:open={dialogOpen}>
 									<Dialog.Trigger>
-										<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-											Make Offer
+										<button 
+											class="px-4 py-2 {request.mentee_id === $user?.id ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'} rounded-lg transition-colors"
+											disabled={request.mentee_id === $user?.id}
+											title={request.mentee_id === $user?.id ? "You can't make an offer to your own request" : ""}
+										>
+											{request.mentee_id === $user?.id ? "Your Own Request" : "Make Offer"}
 										</button>
 									</Dialog.Trigger>
 									<Dialog.Content>

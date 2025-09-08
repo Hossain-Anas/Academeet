@@ -36,7 +36,7 @@ export interface HelpOfferData {
   proposed_time?: string | null;
   proposed_fee?: number | null;
   message?: string;
-  status?: 'Pending' | 'Accepted' | 'Declined';
+  status?: 'Pending' | 'Accepted' | 'Declined' | 'Withdrawn';
   created_at?: string | null;
   updated_at?: string | null;
 }

@@ -9,7 +9,7 @@ export class HelpOffer {
   proposed_time: string | null;
   proposed_fee: number | null;
   message: string;
-  status: 'Pending' | 'Accepted' | 'Declined';
+  status: 'Pending' | 'Accepted' | 'Declined' | 'Withdrawn';
   created_at: string | null;
   updated_at: string | null;
 
@@ -28,14 +28,75 @@ export class HelpOffer {
   // Create a new help offer
   static async create(offerData: HelpOfferData): Promise<HelpOffer> {
     try {
-      const { data, error } = await supabase
+      // First, create the offer
+      const { data: offer, error } = await supabase
         .from('help_offers')
-        .insert([offerData])
+        .insert([{
+          ...offerData,
+          status: 'Pending'
+        }])
         .select()
         .single();
 
       if (error) throw error;
-      return new HelpOffer(data);
+
+      // Get the request and mentee info
+      const { data: request, error: requestError } = await supabase
+        .from('help_requests')
+        .select(`
+          *,
+          mentee:users!help_requests_mentee_id_fkey(*)
+        `)
+        .eq('request_id', offerData.request_id)
+        .single();
+
+      if (requestError) throw requestError;
+
+      // Get mentor info
+      const { data: mentor, error: mentorError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('user_id', offerData.mentor_id)
+        .single();
+
+      if (mentorError) throw mentorError;
+
+      // Create a pending booking
+      const { error: bookingError } = await supabase
+        .from('bookings')
+        .insert({
+          mentee_id: request.mentee.user_id,
+          mentor_id: offerData.mentor_id,
+          request_id: offerData.request_id,
+          offer_id: offer.offer_id,
+          session_time: offerData.proposed_time || new Date().toISOString(),
+          duration_minutes: 60,
+          status: 'Pending'
+        });
+
+      if (bookingError) throw bookingError;
+
+      // Create notifications for both parties
+      const notifications = [
+        {
+          user_id: request.mentee.user_id,
+          message: `New offer from ${mentor.name} for "${request.title}"`,
+          type: 'Offer'
+        },
+        {
+          user_id: offerData.mentor_id,
+          message: `You made an offer on "${request.title}". Awaiting response.`,
+          type: 'Offer'
+        }
+      ];
+
+      const { error: notificationError } = await supabase
+        .from('notifications')
+        .insert(notifications);
+
+      if (notificationError) throw notificationError;
+
+      return new HelpOffer(offer);
     } catch (error) {
       console.error('Error creating help offer:', error);
       throw error;
@@ -156,7 +217,7 @@ export class HelpOffer {
       // First, update this offer to accepted
       await this.update({ status: 'Accepted' });
 
-      // Then, decline all other offers for the same request
+      // Then, decline all other offers for the same request and cancel their bookings
       const { error: declineError } = await supabase
         .from('help_offers')
         .update({ status: 'Declined' })
@@ -164,6 +225,23 @@ export class HelpOffer {
         .neq('offer_id', this.offer_id);
 
       if (declineError) throw declineError;
+
+      // Cancel bookings for declined offers
+      const { error: cancelBookingsError } = await supabase
+        .from('bookings')
+        .update({ status: 'Cancelled' })
+        .eq('request_id', this.request_id)
+        .neq('offer_id', this.offer_id);
+
+      if (cancelBookingsError) throw cancelBookingsError;
+
+      // Update the booking for this offer to Confirmed
+      const { error: confirmBookingError } = await supabase
+        .from('bookings')
+        .update({ status: 'Confirmed' })
+        .eq('offer_id', this.offer_id);
+
+      if (confirmBookingError) throw confirmBookingError;
 
       // Finally, mark the request as assigned
       const { error: requestError } = await supabase
@@ -193,7 +271,18 @@ export class HelpOffer {
   // Withdraw offer (mentor can withdraw their own offer)
   async withdraw(): Promise<HelpOffer> {
     try {
-      return await this.update({ status: 'Declined' });
+      // Update offer status to withdrawn
+      await this.update({ status: 'Withdrawn' });
+
+      // Cancel the associated booking
+      const { error: cancelBookingError } = await supabase
+        .from('bookings')
+        .update({ status: 'Cancelled' })
+        .eq('offer_id', this.offer_id);
+
+      if (cancelBookingError) throw cancelBookingError;
+
+      return this;
     } catch (error) {
       console.error('Error withdrawing offer:', error);
       throw error;
@@ -208,6 +297,7 @@ export class HelpOffer {
         .select('offer_id')
         .eq('mentor_id', mentorId)
         .eq('request_id', requestId)
+        .in('status', ['Pending', 'Accepted']) // Only check for active offers
         .single();
 
       if (error && error.code !== 'PGRST116') throw error;

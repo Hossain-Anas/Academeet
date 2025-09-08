@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import { HelpRequestController } from '$lib/controllers/helpRequestController';
 	import { HelpOfferController } from '$lib/controllers/helpOfferController';
+	import { BookingController } from '$lib/controllers/bookingController';
 	import { toast } from '$lib/stores/toast';
 
 	// Basic mentee profile data - will be populated from userStore
@@ -25,45 +26,9 @@
 	// Track if component is mounted to prevent hydration mismatch
 	let isMounted = false;
 
-	// Sample sessions data for mentee (learning sessions)
-	let sessions = [
-		{
-			id: '1',
-			title: 'Data Structures Session',
-			mentor: 'Dr. Sarah Johnson',
-			date: '2024-01-15T14:00',
-			status: 'ongoing',
-			duration: 60,
-			subject: 'Data Structures'
-		},
-		{
-			id: '2',
-			title: 'Web Development Review',
-			mentor: 'Prof. Mike Davis',
-			date: '2024-01-17T10:00',
-			status: 'upcoming',
-			duration: 45,
-			subject: 'Web Development'
-		},
-		{
-			id: '3',
-			title: 'Algorithm Analysis',
-			mentor: 'Dr. Sarah Johnson',
-			date: '2024-01-10T16:00',
-			status: 'completed',
-			duration: 90,
-			subject: 'Algorithms'
-		},
-		{
-			id: '4',
-			title: 'Machine Learning Basics',
-			mentor: 'Prof. Emily Wilson',
-			date: '2024-01-08T13:00',
-			status: 'completed',
-			duration: 75,
-			subject: 'Machine Learning'
-		}
-	];
+	// Sessions data from Supabase (will be loaded dynamically)
+	let sessions: any[] = [];
+	let isLoadingSessions = false;
 
 	// Mentee's posted requests with offers
 	let menteeRequests: any[] = [];
@@ -125,6 +90,47 @@
 		}
 	}
 
+	// Load mentee's sessions (bookings) from Supabase
+	async function loadMenteeSessions() {
+		if (!$user?.id) return;
+		
+		try {
+			isLoadingSessions = true;
+			const bookings = await BookingController.getBookingsByMentee($user.id);
+			
+			// Transform bookings to session format for UI compatibility
+			sessions = bookings.map(booking => ({
+				id: booking.booking_id,
+				title: (booking as any).request?.title || 'Direct Session',
+				mentor: (booking as any).mentor?.name || 'Unknown Mentor',
+				date: booking.session_time,
+				status: mapBookingStatusToSessionStatus(booking.status || 'Scheduled'),
+				duration: booking.duration_minutes,
+				subject: (booking as any).request?.course_code || 'General'
+			}));
+		} catch (error) {
+			console.error('Error loading mentee sessions:', error);
+			toast.show('Failed to load sessions', 'error');
+		} finally {
+			isLoadingSessions = false;
+		}
+	}
+
+	// Map booking status to session status for UI compatibility
+	function mapBookingStatusToSessionStatus(bookingStatus: string): string {
+		switch (bookingStatus) {
+			case 'Scheduled':
+				return 'upcoming';
+			case 'Completed':
+				return 'completed';
+			case 'Cancelled':
+			case 'No-show':
+				return 'completed'; // Treat cancelled/no-show as completed for UI
+			default:
+				return 'upcoming';
+		}
+	}
+
 	// Show loading until component is mounted
 	$: showContent = isMounted;
 
@@ -141,6 +147,7 @@
 	onMount(() => {
 		console.log('Mentee profile page mounted');
 		loadMenteeRequests();
+		loadMenteeSessions();
 		
 		// Mark component as mounted
 		isMounted = true;
@@ -712,49 +719,56 @@
 	<div class="bg-white rounded-lg shadow-md p-6">
 		<h2 class="text-xl font-semibold text-gray-900 mb-4">List of learning sessions (with status)</h2>
 		
-		<div class="overflow-x-auto">
-			<table class="w-full">
-				<thead>
-					<tr class="border-b border-gray-200">
-						<th class="text-left py-3 px-4 font-medium text-gray-700">Session</th>
-						<th class="text-left py-3 px-4 font-medium text-gray-700">Mentor</th>
-						<th class="text-left py-3 px-4 font-medium text-gray-700">Subject</th>
-						<th class="text-left py-3 px-4 font-medium text-gray-700">Date & Time</th>
-						<th class="text-left py-3 px-4 font-medium text-gray-700">Duration</th>
-						<th class="text-left py-3 px-4 font-medium text-gray-700">Status</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each filteredSessions as session}
-						<tr class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onclick={() => showSessionDetails(session)}>
-							<td class="py-3 px-4">
-								<div class="font-medium text-gray-900">{session.title}</div>
-							</td>
-							<td class="py-3 px-4 text-gray-700">{session.mentor}</td>
-							<td class="py-3 px-4 text-gray-700">{session.subject}</td>
-							<td class="py-3 px-4 text-gray-700">
-								{new Date(session.date).toLocaleDateString()} at {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-							</td>
-							<td class="py-3 px-4 text-gray-700">{session.duration} min</td>
-							<td class="py-3 px-4">
-								<span class="px-2 py-1 text-xs rounded-full {
-									session.status === 'ongoing' ? 'bg-green-100 text-green-800' :
-									session.status === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
-									'bg-gray-100 text-gray-800'
-								}">
-									{session.status}
-								</span>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-		
-		{#if filteredSessions.length === 0}
-			<div class="text-center py-8 text-gray-500">
-				No sessions found matching your search criteria.
+		{#if isLoadingSessions}
+			<div class="text-center py-8">
+				<div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+				<p class="mt-2 text-gray-600">Loading sessions...</p>
 			</div>
+		{:else}
+			<div class="overflow-x-auto">
+				<table class="w-full">
+					<thead>
+						<tr class="border-b border-gray-200">
+							<th class="text-left py-3 px-4 font-medium text-gray-700">Session</th>
+							<th class="text-left py-3 px-4 font-medium text-gray-700">Mentor</th>
+							<th class="text-left py-3 px-4 font-medium text-gray-700">Subject</th>
+							<th class="text-left py-3 px-4 font-medium text-gray-700">Date & Time</th>
+							<th class="text-left py-3 px-4 font-medium text-gray-700">Duration</th>
+							<th class="text-left py-3 px-4 font-medium text-gray-700">Status</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each filteredSessions as session}
+							<tr class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onclick={() => showSessionDetails(session)}>
+								<td class="py-3 px-4">
+									<div class="font-medium text-gray-900">{session.title}</div>
+								</td>
+								<td class="py-3 px-4 text-gray-700">{session.mentor}</td>
+								<td class="py-3 px-4 text-gray-700">{session.subject}</td>
+								<td class="py-3 px-4 text-gray-700">
+									{new Date(session.date).toLocaleDateString()} at {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+								</td>
+								<td class="py-3 px-4 text-gray-700">{session.duration} min</td>
+								<td class="py-3 px-4">
+									<span class="px-2 py-1 text-xs rounded-full {
+										session.status === 'ongoing' ? 'bg-green-100 text-green-800' :
+										session.status === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
+										'bg-gray-100 text-gray-800'
+									}">
+										{session.status}
+									</span>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+			
+			{#if filteredSessions.length === 0}
+				<div class="text-center py-8 text-gray-500">
+					No sessions found matching your search criteria.
+				</div>
+			{/if}
 		{/if}
 	</div>
 

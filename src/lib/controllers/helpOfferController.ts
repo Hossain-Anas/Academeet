@@ -139,6 +139,14 @@ export class HelpOfferController {
       // Accept the offer
       const updatedOffer = await helpOffer.accept();
 
+      // Create a booking for this accepted offer
+      await BookingController.createBookingFromOffer({
+        offer_id: offerId,
+        mentee_id: menteeId,
+        session_time: helpOffer.proposed_time || new Date().toISOString(),
+        duration_minutes: 60 // Default duration
+      });
+
       // Send acceptance notifications
       await this.notifyOfferAccepted(helpOffer);
 
@@ -233,29 +241,29 @@ export class HelpOfferController {
     }
   }
 
-  // Notify mentee of new offer
-  private static async notifyMenteeOfNewOffer(helpOffer: HelpOfferData): Promise<void> {
+  // Create notifications for a new offer
+  private static async createOfferNotifications(menteeId: string, mentorId: string, mentorName: string, requestTitle: string): Promise<void> {
     try {
-      // Get the request to find the mentee
-      const helpRequest = await HelpRequest.getById(helpOffer.request_id!);
-      
-      // Get mentor info for the notification
-      const { data: mentor, error } = await supabase
-        .from('users')
-        .select('first_name, last_name')
-        .eq('user_id', helpOffer.mentor_id)
-        .single();
+      const notifications = [
+        {
+          user_id: menteeId,
+          message: `New offer from ${mentorName} for "${requestTitle}"`,
+          type: 'Offer'
+        },
+        {
+          user_id: mentorId,
+          message: `You made an offer on "${requestTitle}". Awaiting response.`,
+          type: 'Offer'
+        }
+      ];
+
+      const { error } = await supabase
+        .from('notifications')
+        .insert(notifications);
 
       if (error) throw error;
-
-      // Create notification for mentee
-      await Notification.create({
-        user_id: helpRequest.mentee_id,
-        message: `New offer from ${mentor.first_name} ${mentor.last_name}: "${helpOffer.message?.substring(0, 100) || ''}..."`,
-        type: 'Offer'
-      });
     } catch (error) {
-      console.error('Notify mentee of new offer error:', error);
+      console.error('Create offer notifications error:', error);
       // Don't throw error as this is not critical
     }
   }

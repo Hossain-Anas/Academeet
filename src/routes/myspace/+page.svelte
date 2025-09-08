@@ -96,7 +96,17 @@
 
 			if (error) throw error;
 
-			upcomingSchedules = bookings.map(booking => ({
+			// Filter out duplicate sessions (keep only the latest status)
+			const uniqueBookings = new Map();
+			(bookings || []).forEach(booking => {
+				const key = booking.request_id || booking.session_time; // Use request_id or session_time as key
+				if (!uniqueBookings.has(key) || 
+					(booking.status === 'Confirmed' && uniqueBookings.get(key).status === 'Pending')) {
+					uniqueBookings.set(key, booking);
+				}
+			});
+			
+			upcomingSchedules = Array.from(uniqueBookings.values()).map(booking => ({
 				id: booking.booking_id,
 				type: booking.mentee_id === $user?.id ? 'mentee' : 'mentor',
 				title: `Session with ${booking.mentee_id === $user?.id ? booking.mentor.name : booking.mentee.name}`,
@@ -109,57 +119,6 @@
 			}));
 		} catch (error) {
 			console.error('Error loading schedules:', error);
-		}
-	}
-
-	async function handleConfirmSession(bookingId: string) {
-		try {
-			// Get the booking details first
-			const { data: booking, error: bookingError } = await supabase
-				.from('bookings')
-				.select(`
-					*,
-					mentee:users!bookings_mentee_id_fkey (
-						name
-					),
-					mentor:users!bookings_mentor_id_fkey (
-						name
-					)
-				`)
-				.eq('booking_id', bookingId)
-				.single();
-
-			if (bookingError) throw bookingError;
-
-			// Update booking status
-			const { error: updateError } = await supabase
-				.from('bookings')
-				.update({ status: 'Confirmed' })
-				.eq('booking_id', bookingId);
-
-			if (updateError) throw updateError;
-
-			// Create notification for mentee
-			const { error: notificationError } = await supabase
-				.from('notifications')
-				.insert({
-					user_id: booking.mentee_id,
-					type: 'Booking',
-					message: `${booking.mentor.name} has confirmed your session for ${booking.topic} on ${utcToBD(booking.session_time).replace(' BDT', '')}`,
-					is_read: false
-				});
-
-			if (notificationError) throw notificationError;
-
-			// Refresh data
-			await Promise.all([
-				loadUpcomingSchedules(),
-				loadNotifications()
-			]);
-
-		} catch (error) {
-			console.error('Error confirming session:', error);
-			// You might want to show a toast notification here
 		}
 	}
 
@@ -437,18 +396,6 @@
 													Close
 												</button>
 											</Dialog.Close>
-												{#if schedule.type === 'mentor' && (schedule.status === 'Pending' || schedule.status === 'Scheduled')}
-													<button 
-														onclick={() => handleConfirmSession(schedule.id)}
-														class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-													>
-														Confirm Session
-													</button>
-												{:else if schedule.status === 'Confirmed'}
-											<button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-												Join Session
-											</button>
-												{/if}
 										</div>
 									</Dialog.Content>
 								</Dialog.Root>
@@ -543,11 +490,6 @@
 										Close
 									</button>
 								</Dialog.Close>
-								{#if notification.type === 'offer'}
-									<button class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-										Accept Offer
-									</button>
-								{/if}
 							</div>
 						</Dialog.Content>
 					</Dialog.Root>

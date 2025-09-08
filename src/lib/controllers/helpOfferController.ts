@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient';
 import { HelpOffer } from '../models/helpOffer';
 import { HelpRequest } from '../models/helpRequest';
 import { Notification } from '../models/notification';
+import { BookingController } from './bookingController';
 import type { HelpOfferData } from '../types/database';
 
 // Interface for creating help offer
@@ -14,12 +15,19 @@ interface CreateHelpOfferData {
   message: string;
 }
 
-// Interface for updating help offer
+  // Interface for updating help offer
 interface UpdateHelpOfferData {
   proposed_time?: string;
   proposed_fee?: number;
   message?: string;
-  status?: 'Pending' | 'Accepted' | 'Declined';
+  status?: 'Pending' | 'Accepted' | 'Declined' | 'Withdrawn' | 'Negotiating';
+}
+
+// Interface for negotiation data
+interface NegotiateOfferData {
+  proposed_time?: string;
+  proposed_fee?: number;
+  message: string;
 }
 
 export class HelpOfferController {
@@ -48,8 +56,6 @@ export class HelpOfferController {
         message
       });
 
-      // Send notification to mentee about new offer
-      await this.notifyMenteeOfNewOffer(helpOffer.toJSON());
 
       return helpOffer.toJSON();
     } catch (error) {
@@ -231,6 +237,73 @@ export class HelpOfferController {
     }
   }
 
+  // Negotiate help offer (by mentee)
+  static async negotiateHelpOffer(offerId: string, menteeId: string, negotiationData: NegotiateOfferData): Promise<HelpOfferData> {
+    try {
+      const helpOffer = await HelpOffer.getById(offerId);
+      
+      // Verify mentee owns the request
+      const helpRequest = await HelpRequest.getById(helpOffer.request_id!);
+      if (helpRequest.mentee_id !== menteeId) {
+        throw new Error('You can only negotiate offers on your own requests');
+      }
+
+      // Check if offer is pending or already in negotiation
+      if (!['Pending', 'Negotiating'].includes(helpOffer.status)) {
+        throw new Error('Can only negotiate pending or negotiating offers');
+      }
+
+      // Update the offer with negotiation data
+      const updatedOffer = await helpOffer.update({
+        status: 'Negotiating',
+        proposed_time: negotiationData.proposed_time,
+        proposed_fee: negotiationData.proposed_fee,
+        message: negotiationData.message
+      });
+
+      // Send negotiation notifications
+      await this.notifyOfferNegotiation(helpOffer, 'mentee');
+
+      return updatedOffer.toJSON();
+    } catch (error) {
+      console.error('Negotiate help offer error:', error);
+      throw error;
+    }
+  }
+
+  // Counter-negotiate help offer (by mentor)
+  static async counterNegotiateHelpOffer(offerId: string, mentorId: string, negotiationData: NegotiateOfferData): Promise<HelpOfferData> {
+    try {
+      const helpOffer = await HelpOffer.getById(offerId);
+      
+      // Verify mentor owns the offer
+      if (helpOffer.mentor_id !== mentorId) {
+        throw new Error('You can only negotiate your own offers');
+      }
+
+      // Check if offer is in negotiation
+      if (helpOffer.status !== 'Negotiating') {
+        throw new Error('Can only counter-negotiate offers in negotiation');
+      }
+
+      // Update the offer with negotiation data
+      const updatedOffer = await helpOffer.update({
+        status: 'Negotiating',
+        proposed_time: negotiationData.proposed_time,
+        proposed_fee: negotiationData.proposed_fee,
+        message: negotiationData.message
+      });
+
+      // Send negotiation notifications
+      await this.notifyOfferNegotiation(helpOffer, 'mentor');
+
+      return updatedOffer.toJSON();
+    } catch (error) {
+      console.error('Counter-negotiate help offer error:', error);
+      throw error;
+    }
+  }
+
   // Check if mentor has offered on a request
   static async hasMentorOffered(mentorId: string, requestId: string): Promise<boolean> {
     try {
@@ -241,32 +314,6 @@ export class HelpOfferController {
     }
   }
 
-  // Create notifications for a new offer
-  private static async createOfferNotifications(menteeId: string, mentorId: string, mentorName: string, requestTitle: string): Promise<void> {
-    try {
-      const notifications = [
-        {
-          user_id: menteeId,
-          message: `New offer from ${mentorName} for "${requestTitle}"`,
-          type: 'Offer'
-        },
-        {
-          user_id: mentorId,
-          message: `You made an offer on "${requestTitle}". Awaiting response.`,
-          type: 'Offer'
-        }
-      ];
-
-      const { error } = await supabase
-        .from('notifications')
-        .insert(notifications);
-
-      if (error) throw error;
-    } catch (error) {
-      console.error('Create offer notifications error:', error);
-      // Don't throw error as this is not critical
-    }
-  }
 
   // Handle offer status change
   private static async handleOfferStatusChange(helpOffer: any, newStatus: string): Promise<void> {
@@ -296,17 +343,10 @@ export class HelpOfferController {
 
       if (error) throw error;
 
-      // Notify mentee
-      await Notification.create({
-        user_id: helpRequest.mentee_id,
-        message: `Your offer from ${mentor.first_name} ${mentor.last_name} has been accepted!`,
-        type: 'Offer'
-      });
-
       // Notify mentor
       await Notification.create({
         user_id: helpOffer.mentor_id,
-        message: `Your offer on "${helpRequest.title}" has been accepted!`,
+        message: `Your offer on "${helpRequest.title}" has been accepted by the mentee!`,
         type: 'Offer'
       });
     } catch (error) {
@@ -329,17 +369,10 @@ export class HelpOfferController {
 
       if (error) throw error;
 
-      // Notify mentee
-      await Notification.create({
-        user_id: helpRequest.mentee_id,
-        message: `You declined the offer from ${mentor.first_name} ${mentor.last_name}.`,
-        type: 'Offer'
-      });
-
       // Notify mentor
       await Notification.create({
         user_id: helpOffer.mentor_id,
-        message: `Your offer on "${helpRequest.title}" was declined.`,
+        message: `Your offer on "${helpRequest.title}" was declined by the mentee.`,
         type: 'Offer'
       });
     } catch (error) {
@@ -377,6 +410,64 @@ export class HelpOfferController {
       });
     } catch (error) {
       console.error('Notify offer withdrawn error:', error);
+    }
+  }
+
+  // Notify offer negotiation
+  private static async notifyOfferNegotiation(helpOffer: any, negotiator: 'mentee' | 'mentor'): Promise<void> {
+    try {
+      // Get the request
+      const helpRequest = await HelpRequest.getById(helpOffer.request_id!);
+      
+      // Get mentor info
+      const { data: mentor, error: mentorError } = await supabase
+        .from('users')
+        .select('first_name, last_name')
+        .eq('user_id', helpOffer.mentor_id)
+        .single();
+
+      if (mentorError) throw mentorError;
+
+      // Get mentee info
+      const { data: mentee, error: menteeError } = await supabase
+        .from('users')
+        .select('first_name, last_name')
+        .eq('user_id', helpRequest.mentee_id)
+        .single();
+
+      if (menteeError) throw menteeError;
+
+      if (negotiator === 'mentee') {
+        // Notify mentor
+        await Notification.create({
+          user_id: helpOffer.mentor_id,
+          message: `${mentee.first_name} ${mentee.last_name} has counter-offered on "${helpRequest.title}". Proposed fee: ${helpOffer.proposed_fee} Tk`,
+          type: 'Offer'
+        });
+
+        // Notify mentee
+        await Notification.create({
+          user_id: helpRequest.mentee_id,
+          message: `You sent a counter-offer to ${mentor.first_name} ${mentor.last_name} for "${helpRequest.title}". Proposed fee: ${helpOffer.proposed_fee} Tk`,
+          type: 'Offer'
+        });
+      } else {
+        // Notify mentee
+        await Notification.create({
+          user_id: helpRequest.mentee_id,
+          message: `${mentor.first_name} ${mentor.last_name} has counter-offered on "${helpRequest.title}". Proposed fee: ${helpOffer.proposed_fee} Tk`,
+          type: 'Offer'
+        });
+
+        // Notify mentor
+        await Notification.create({
+          user_id: helpOffer.mentor_id,
+          message: `You sent a counter-offer to ${mentee.first_name} ${mentee.last_name} for "${helpRequest.title}". Proposed fee: ${helpOffer.proposed_fee} Tk`,
+          type: 'Offer'
+        });
+      }
+    } catch (error) {
+      console.error('Notify offer negotiation error:', error);
     }
   }
 }

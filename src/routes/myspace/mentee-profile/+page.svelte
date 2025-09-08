@@ -8,7 +8,6 @@
 	import { onMount } from 'svelte';
 	import { HelpRequestController } from '$lib/controllers/helpRequestController';
 	import { HelpOfferController } from '$lib/controllers/helpOfferController';
-	import { BookingController } from '$lib/controllers/bookingController';
 	import { toast } from '$lib/stores/toast';
 
 	// Basic mentee profile data - will be populated from userStore
@@ -96,18 +95,31 @@
 		
 		try {
 			isLoadingSessions = true;
-			const bookings = await BookingController.getBookingsByMentee($user.id);
+			const { data: bookings, error: bookingsError } = await supabase
+				.from('bookings')
+				.select(`
+					*,
+					mentor:users!bookings_mentor_id_fkey(*),
+					request:help_requests!bookings_request_id_fkey(*)
+				`)
+				.eq('mentee_id', $user.id)
+				.order('created_at', { ascending: false });
+
+			if (bookingsError) throw bookingsError;
 			
-			// Transform bookings to session format for UI compatibility
-			sessions = bookings.map(booking => ({
-				id: booking.booking_id,
-				title: (booking as any).request?.title || 'Direct Session',
-				mentor: (booking as any).mentor?.name || 'Unknown Mentor',
-				date: booking.session_time,
-				status: mapBookingStatusToSessionStatus(booking.status || 'Scheduled'),
-				duration: booking.duration_minutes,
-				subject: (booking as any).request?.course_code || 'General'
-			}));
+			// Filter out help request bookings and transform to session format
+			sessions = (bookings || [])
+				.filter(booking => !booking.request) // Only include direct bookings
+				.map(booking => ({
+					id: booking.booking_id,
+					title: booking.topic || 'Mentoring Session',
+					mentor: booking.mentor?.name || 'Unknown Mentor',
+					date: booking.session_time,
+					status: booking.status || 'Scheduled',
+					duration: booking.duration_minutes,
+					subject: booking.topic || 'General',
+					fee: booking.fee
+				}));
 		} catch (error) {
 			console.error('Error loading mentee sessions:', error);
 			toast.show('Failed to load sessions', 'error');
@@ -118,17 +130,7 @@
 
 	// Map booking status to session status for UI compatibility
 	function mapBookingStatusToSessionStatus(bookingStatus: string): string {
-		switch (bookingStatus) {
-			case 'Scheduled':
-				return 'upcoming';
-			case 'Completed':
-				return 'completed';
-			case 'Cancelled':
-			case 'No-show':
-				return 'completed'; // Treat cancelled/no-show as completed for UI
-			default:
-				return 'upcoming';
-		}
+		return bookingStatus; // Use the actual booking status directly
 	}
 
 	// Show loading until component is mounted
@@ -325,17 +327,59 @@
 
 	// Get status statistics
 	$: statusStats = {
-		ongoing: sessions.filter(s => s.status === 'ongoing').length,
-		upcoming: sessions.filter(s => s.status === 'upcoming').length,
-		completed: sessions.filter(s => s.status === 'completed').length
+		confirmed: sessions.filter(s => s.status === 'Confirmed').length,
+		pending: sessions.filter(s => s.status === 'Pending').length,
+		completed: sessions.filter(s => s.status === 'Completed').length,
+		cancelled: sessions.filter(s => s.status === 'Cancelled').length,
+		noshow: sessions.filter(s => s.status === 'No-show').length
 	};
 
+	// Load help request bookings
+	async function loadHelpRequestBookings() {
+		if (!$user?.id) return [];
+		
+		try {
+			const { data: bookings, error: bookingsError } = await supabase
+				.from('bookings')
+				.select(`
+					*,
+					mentor:users!bookings_mentor_id_fkey(*),
+					request:help_requests!bookings_request_id_fkey(*)
+				`)
+				.eq('mentee_id', $user.id)
+				.not('request_id', 'is', null)
+				.order('created_at', { ascending: false });
+
+			if (bookingsError) throw bookingsError;
+			
+			return (bookings || []).map(booking => ({
+				id: booking.booking_id,
+				title: booking.request?.title || 'Help Request Session',
+				mentor: booking.mentor?.name || 'Unknown Mentor',
+				date: booking.session_time,
+				status: booking.status || 'Scheduled',
+				duration: booking.request?.duration_minutes || 30,
+				subject: booking.request?.course_code || 'General',
+				fee: booking.request?.budget
+			}));
+		} catch (error) {
+			console.error('Error loading help request bookings:', error);
+			return [];
+		}
+	}
+
+	// Combined sessions for the list
+	let helpRequestSessions: any[] = [];
+	onMount(async () => {
+		helpRequestSessions = await loadHelpRequestBookings();
+	});
+
 	// Filter and sort sessions
-	$: filteredSessions = sessions
+	$: filteredSessions = [...sessions, ...helpRequestSessions]
 		.filter(session => 
-			session.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			session.mentor.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			session.subject.toLowerCase().includes(searchQuery.toLowerCase())
+			session.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			session.mentor?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			session.subject?.toLowerCase().includes(searchQuery.toLowerCase())
 		)
 		.sort((a, b) => {
 			// Sort by selected criteria
@@ -344,25 +388,25 @@
 					// Define status order based on current statusSortOrder
 					let statusOrder: Record<string, number>;
 					switch (statusSortOrder) {
-						case 0: // ongoing first
-							statusOrder = { ongoing: 0, upcoming: 1, completed: 2 };
+						case 0: // confirmed first
+							statusOrder = { 'Confirmed': 0, 'Pending': 1, 'Completed': 2, 'Cancelled': 3, 'No-show': 4 };
 							break;
-						case 1: // upcoming first
-							statusOrder = { upcoming: 0, ongoing: 1, completed: 2 };
+						case 1: // pending first
+							statusOrder = { 'Pending': 0, 'Confirmed': 1, 'Completed': 2, 'Cancelled': 3, 'No-show': 4 };
 							break;
 						case 2: // completed first
-							statusOrder = { completed: 0, ongoing: 1, upcoming: 2 };
+							statusOrder = { 'Completed': 0, 'Confirmed': 1, 'Pending': 2, 'Cancelled': 3, 'No-show': 4 };
 							break;
 						default:
-							statusOrder = { ongoing: 0, upcoming: 1, completed: 2 };
+							statusOrder = { 'Confirmed': 0, 'Pending': 1, 'Completed': 2, 'Cancelled': 3, 'No-show': 4 };
 					}
-					return statusOrder[a.status] - statusOrder[b.status];
+					return (statusOrder[a.status] || 999) - (statusOrder[b.status] || 999);
 				case 'date':
 					return new Date(b.date).getTime() - new Date(a.date).getTime();
 				case 'title':
-					return a.title.localeCompare(b.title);
+					return (a.title || '').localeCompare(b.title || '');
 				case 'mentor':
-					return a.mentor.localeCompare(b.mentor);
+					return (a.mentor || '').localeCompare(b.mentor || '');
 				default:
 					return 0;
 			}
@@ -588,6 +632,116 @@
 		</div>
 	</div>
 
+	<!-- My Booking Sessions Section -->
+	<div class="bg-white rounded-lg shadow-md p-6 mb-8">
+		<h2 class="text-xl font-semibold text-gray-900 mb-4">My Booking Sessions</h2>
+		
+		{#if isLoadingSessions}
+			<div class="text-center py-8">
+				<div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+				<p class="mt-2 text-gray-600">Loading booking sessions...</p>
+			</div>
+		{:else if sessions.length === 0}
+			<div class="text-center py-8 text-gray-500">
+				<p>You haven't booked any sessions yet.</p>
+				<a href="/mentors" class="text-blue-600 hover:text-blue-800 underline">Browse mentors to book a session</a>
+			</div>
+		{:else}
+			<div class="max-h-96 overflow-y-auto space-y-3 pr-2">
+				{#each sessions as session}
+					<div 
+						class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+						role="button"
+						tabindex="0"
+						onclick={() => showSessionDetails(session)}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								showSessionDetails(session);
+							}
+						}}
+					>
+						<div class="flex justify-between items-start">
+							<div class="flex-1">
+								<h3 class="text-lg font-semibold text-gray-900 mb-1">{session.title}</h3>
+								<div class="flex items-center space-x-4 text-sm text-gray-600 mb-2">
+									<span class="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+										{session.subject}
+									</span>
+									<span class="px-2 py-1 rounded-full text-xs font-medium {
+										session.status === 'Confirmed' ? 'bg-green-100 text-green-800' :
+										session.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+										session.status === 'Completed' ? 'bg-blue-100 text-blue-800' :
+										session.status === 'No-show' ? 'bg-gray-100 text-gray-800' :
+										session.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
+										'bg-purple-100 text-purple-800'
+									}">
+										{session.status === 'Pending' ? 'Unconfirmed' : 
+										 session.status === 'Cancelled' ? 'Declined by Mentor' : 
+										 session.status}
+									</span>
+									<span class="text-lg font-bold text-green-600">Tk {session.fee}</span>
+									<span class="text-sm text-gray-600">{session.duration} min</span>
+								</div>
+								<div class="text-sm text-gray-600">
+									<span class="font-medium">With:</span> {session.mentor}
+									<span class="ml-4 font-medium">Time:</span> {utcToBD(session.date)}
+								</div>
+							</div>
+							<div class="text-right">
+								{#if session.status === 'Pending'}
+									<div class="mt-2">
+										<button 
+											class="w-full px-3 py-1.5 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
+											onclick={(e) => {
+												e.stopPropagation();
+												if (confirm('Are you sure you want to cancel this booking request?')) {
+													(async () => {
+														try {
+															if (!$user?.id) {
+																toast.show('User not authenticated', 'error');
+																return;
+															}
+															const { error } = await supabase
+																.from('bookings')
+																.update({ status: 'Cancelled' })
+																.eq('booking_id', session.id);
+
+															if (error) throw error;
+
+															toast.show('Booking cancelled successfully', 'success');
+															window.location.reload();
+														} catch (error) {
+															console.error('Error cancelling booking:', error);
+															toast.show('Failed to cancel booking', 'error');
+														}
+													})();
+												}
+											}}
+										>
+											Cancel Booking
+										</button>
+									</div>
+								{:else if session.status === 'Confirmed'}
+									<div class="mt-2">
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+											Session Confirmed
+										</span>
+									</div>
+								{:else if session.status === 'Cancelled' || session.status === 'Declined'}
+									<div class="mt-2">
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+											{session.status === 'Cancelled' ? 'Declined by Mentor' : 'Cancelled by You'}
+										</span>
+									</div>
+								{/if}
+							</div>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+
 	<!-- My Posted Requests Section -->
 	<div class="bg-white rounded-lg shadow-md p-6 mb-8">
 		<h2 class="text-xl font-semibold text-gray-900 mb-4">My Posted Requests</h2>
@@ -708,7 +862,7 @@
 					class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
 					onclick={handleStatusSort}
 				>
-					Sort by Status ({statusSortOrder === 0 ? 'Ongoing' : statusSortOrder === 1 ? 'Upcoming' : 'Completed'} first)
+					Sort by Status ({statusSortOrder === 0 ? 'Confirmed' : statusSortOrder === 1 ? 'Pending' : 'Completed'} first)
 				</button>
 				<button class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50" onclick={() => searchQuery = ''}>Clear</button>
 			</div>
@@ -746,16 +900,19 @@
 								<td class="py-3 px-4 text-gray-700">{session.mentor}</td>
 								<td class="py-3 px-4 text-gray-700">{session.subject}</td>
 								<td class="py-3 px-4 text-gray-700">
-									{new Date(session.date).toLocaleDateString()} at {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+									{utcToBD(session.date)}
 								</td>
 								<td class="py-3 px-4 text-gray-700">{session.duration} min</td>
 								<td class="py-3 px-4">
 									<span class="px-2 py-1 text-xs rounded-full {
-										session.status === 'ongoing' ? 'bg-green-100 text-green-800' :
-										session.status === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
-										'bg-gray-100 text-gray-800'
+										session.status === 'Confirmed' ? 'bg-green-100 text-green-800' :
+										session.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+										session.status === 'Completed' ? 'bg-blue-100 text-blue-800' :
+										session.status === 'No-show' ? 'bg-gray-100 text-gray-800' :
+										session.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
+										'bg-purple-100 text-purple-800'
 									}">
-										{session.status}
+										{session.status === 'Pending' ? 'Unconfirmed' : session.status}
 									</span>
 								</td>
 							</tr>
@@ -857,9 +1014,9 @@
 														try {
 															await HelpOfferController.acceptHelpOffer(offer.offer_id, $user?.id!);
 															toast.show('Offer accepted successfully!', 'success');
-															loadMenteeRequests();
-															showRequestDialog = false;
+															window.location.reload();
 														} catch (error) {
+															console.error('Error accepting offer:', error);
 															toast.show('Failed to accept offer', 'error');
 														}
 													}}
@@ -872,9 +1029,9 @@
 														try {
 															await HelpOfferController.declineHelpOffer(offer.offer_id, $user?.id!);
 															toast.show('Offer declined', 'success');
-															loadMenteeRequests();
-															showRequestDialog = false;
+															window.location.reload();
 														} catch (error) {
+															console.error('Error declining offer:', error);
 															toast.show('Failed to decline offer', 'error');
 														}
 													}}
@@ -1100,11 +1257,16 @@
 						<span class="text-sm font-medium text-gray-700">Status:</span>
 						<div class="mt-1">
 							<span class="px-3 py-1 text-sm rounded-full {
-								selectedSession.status === 'ongoing' ? 'bg-green-100 text-green-800' :
-								selectedSession.status === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
-								'bg-gray-100 text-gray-800'
+								selectedSession.status === 'Confirmed' ? 'bg-green-100 text-green-800' :
+								selectedSession.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+								selectedSession.status === 'Completed' ? 'bg-blue-100 text-blue-800' :
+								selectedSession.status === 'No-show' ? 'bg-gray-100 text-gray-800' :
+								selectedSession.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
+								'bg-purple-100 text-purple-800'
 							}">
-								{selectedSession.status.charAt(0).toUpperCase() + selectedSession.status.slice(1)}
+								{selectedSession.status === 'Pending' ? 'Unconfirmed' : 
+								 selectedSession.status === 'Cancelled' ? 'Declined by Mentor' : 
+								 selectedSession.status}
 							</span>
 						</div>
 					</div>

@@ -42,11 +42,56 @@
 	// Sessions data - initially empty
 	let sessions: any[] = [];
 	
+	// Load mentor's sessions from bookings
+	async function loadMentorSessions() {
+		if (!$user?.id) return;
+		
+		try {
+			const { data: bookings, error: bookingsError } = await supabase
+				.from('bookings')
+				.select(`
+					*,
+					mentee:users!bookings_mentee_id_fkey(*),
+					request:help_requests!bookings_request_id_fkey(*)
+				`)
+				.eq('mentor_id', $user.id)
+				.order('created_at', { ascending: false });
+
+			if (bookingsError) throw bookingsError;
+			
+			// Filter out duplicate sessions (keep only the latest status)
+			const uniqueSessions = new Map();
+			(bookings || []).forEach(booking => {
+				const key = booking.request_id || booking.session_time; // Use request_id or session_time as key
+				if (!uniqueSessions.has(key) || 
+					(booking.status === 'Confirmed' && uniqueSessions.get(key).status === 'Pending')) {
+					uniqueSessions.set(key, booking);
+				}
+			});
+			
+			sessions = Array.from(uniqueSessions.values());
+		} catch (error) {
+			console.error('Error loading mentor sessions:', error);
+			toast.show('Failed to load sessions', 'error');
+		}
+	}
+	
 	// Mentor's sent offers
 	let mentorOffers: any[] = [];
 	let isLoadingOffers = false;
 	let selectedOffer: any = null;
 	let showOfferDialog = false;
+
+	// Mentor's received offers (when acting as mentee)
+	let receivedOffers: any[] = [];
+	let isLoadingReceivedOffers = false;
+	let selectedReceivedOffer: any = null;
+	let showReceivedOfferDialog = false;
+	let negotiationData = {
+		proposed_fee: 0,
+		proposed_time: '',
+		message: ''
+	};
 	
 	// Show loading until component is mounted
 	$: showContent = isMounted;
@@ -91,7 +136,7 @@
 		}
 	}
 
-	// Load mentor's sent offers
+	// Load mentor's sent help offers
 	async function loadMentorOffers() {
 		if (!$user?.id) return;
 		
@@ -131,6 +176,33 @@
 			toast.show('Failed to load offers', 'error');
 		} finally {
 			isLoadingOffers = false;
+		}
+	}
+
+	// Load mentor's received booking requests
+	async function loadReceivedOffers() {
+		if (!$user?.id) return;
+		
+		try {
+			isLoadingReceivedOffers = true;
+			const { data: bookings, error: bookingsError } = await supabase
+				.from('bookings')
+				.select(`
+					*,
+					mentee:users!bookings_mentee_id_fkey(*)
+				`)
+				.eq('mentor_id', $user.id)
+				.is('request_id', null) // Only show direct bookings, not help request bookings
+				.order('created_at', { ascending: false });
+
+			if (bookingsError) throw bookingsError;
+			
+			receivedOffers = bookings || [];
+		} catch (error) {
+			console.error('Error loading received bookings:', error);
+			toast.show('Failed to load received bookings', 'error');
+		} finally {
+			isLoadingReceivedOffers = false;
 		}
 	}
 
@@ -252,8 +324,10 @@
 		// Mark component as mounted
 		isMounted = true;
 		
-		// Load mentor offers
+		// Load mentor sessions, offers and received offers
+		loadMentorSessions();
 		loadMentorOffers();
+		loadReceivedOffers();
 		
 		// Return cleanup function
 		return () => {
@@ -420,18 +494,21 @@
 
 	// Get status statistics
 	$: statusStats = {
-		ongoing: sessions.filter(s => s.status === 'ongoing').length,
-		upcoming: sessions.filter(s => s.status === 'upcoming').length,
-		completed: sessions.filter(s => s.status === 'completed').length
+		confirmed: sessions.filter(s => s.status === 'Confirmed').length,
+		pending: sessions.filter(s => s.status === 'Pending').length,
+		completed: sessions.filter(s => s.status === 'Completed').length,
+		cancelled: sessions.filter(s => s.status === 'Cancelled').length,
+		noshow: sessions.filter(s => s.status === 'No-show').length
 	};
 
 	// Filter and sort sessions
 	$: filteredSessions = sessions
-		.filter(session => 
-			session.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			session.student.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			session.subject.toLowerCase().includes(searchQuery.toLowerCase())
-		)
+		.filter(session => {
+			const searchTerms = searchQuery.toLowerCase();
+			return (session.topic || '').toLowerCase().includes(searchTerms) ||
+				((session as any).mentee?.name || '').toLowerCase().includes(searchTerms) ||
+				(session.message || '').toLowerCase().includes(searchTerms);
+		})
 		.sort((a, b) => {
 			// Sort by selected criteria
 			switch (sortBy) {
@@ -439,25 +516,25 @@
 					// Define status order based on current statusSortOrder
 					let statusOrder: Record<string, number>;
 					switch (statusSortOrder) {
-						case 0: // ongoing first
-							statusOrder = { ongoing: 0, upcoming: 1, completed: 2 };
+						case 0: // confirmed first
+							statusOrder = { 'Confirmed': 0, 'Pending': 1, 'Completed': 2, 'Cancelled': 3, 'No-show': 4 };
 							break;
-						case 1: // upcoming first
-							statusOrder = { upcoming: 0, ongoing: 1, completed: 2 };
+						case 1: // pending first
+							statusOrder = { 'Pending': 0, 'Confirmed': 1, 'Completed': 2, 'Cancelled': 3, 'No-show': 4 };
 							break;
 						case 2: // completed first
-							statusOrder = { completed: 0, ongoing: 1, upcoming: 2 };
+							statusOrder = { 'Completed': 0, 'Confirmed': 1, 'Pending': 2, 'Cancelled': 3, 'No-show': 4 };
 							break;
 						default:
-							statusOrder = { ongoing: 0, upcoming: 1, completed: 2 };
+							statusOrder = { 'Confirmed': 0, 'Pending': 1, 'Completed': 2, 'Cancelled': 3, 'No-show': 4 };
 					}
-					return statusOrder[a.status] - statusOrder[b.status];
+					return (statusOrder[a.status] || 999) - (statusOrder[b.status] || 999);
 				case 'date':
-					return new Date(b.date).getTime() - new Date(a.date).getTime();
+					return new Date(b.session_time).getTime() - new Date(a.session_time).getTime();
 				case 'title':
-					return a.title.localeCompare(b.title);
+					return (a.topic || '').localeCompare(b.topic || '');
 				case 'student':
-					return a.student.localeCompare(b.student);
+					return ((a as any).mentee?.name || '').localeCompare((b as any).mentee?.name || '');
 				default:
 					return 0;
 			}
@@ -796,7 +873,9 @@
 									<span class="bg-purple-100 text-purple-800 px-2 py-1 rounded-full text-xs font-medium">
 										{offer.status}
 									</span>
-									<span class="text-lg font-bold text-green-600">Tk {offer.proposed_fee || 'Not specified'}</span>
+									<span class="text-lg font-bold text-green-600">
+										{offer.proposed_fee ? `Tk ${offer.proposed_fee}` : `Tk ${offer.request?.budget} (Agreed)`}
+									</span>
 								</div>
 								<p class="text-gray-700 mb-2 line-clamp-2">{offer.message || 'No message provided'}</p>
 								<div class="text-sm text-gray-600">
@@ -819,6 +898,192 @@
 										{offer.status}
 									</span>
 								</div>
+							</div>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+
+	<!-- My Received Offers Section -->
+	<div class="bg-white rounded-lg shadow-md p-6 mb-8">
+		<h2 class="text-xl font-semibold text-gray-900 mb-4">My Received Offers</h2>
+		
+		{#if isLoadingReceivedOffers}
+			<div class="text-center py-8">
+				<div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>
+				<p class="mt-2 text-gray-600">Loading received offers...</p>
+			</div>
+		{:else if receivedOffers.length === 0}
+			<div class="text-center py-8 text-gray-500">
+				<p>You haven't received any booking requests yet.</p>
+			</div>
+		{:else}
+			<div class="max-h-96 overflow-y-auto space-y-3 pr-2">
+				{#each receivedOffers as booking}
+					<div 
+						class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+						role="button"
+						tabindex="0"
+						onclick={() => {
+							selectedReceivedOffer = booking;
+							negotiationData = {
+								proposed_fee: booking.fee || 0,
+								proposed_time: booking.session_time || '',
+								message: ''
+							};
+							showReceivedOfferDialog = true;
+						}}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								selectedReceivedOffer = booking;
+								negotiationData = {
+									proposed_fee: booking.fee || 0,
+									proposed_time: booking.session_time || '',
+									message: ''
+								};
+								showReceivedOfferDialog = true;
+							}
+						}}
+					>
+						<div class="flex justify-between items-start">
+							<div class="flex-1">
+								<h3 class="text-lg font-semibold text-gray-900 mb-1">{booking.title || 'Session Request'}</h3>
+								<div class="flex items-center space-x-4 text-sm text-gray-600 mb-2">
+									<span class="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-medium">
+										{booking.subject || 'General'}
+									</span>
+									<span class="bg-purple-100 text-purple-800 px-2 py-1 rounded-full text-xs font-medium">
+										{booking.status}
+									</span>
+									<span class="text-lg font-bold text-green-600">{booking.duration_minutes} min</span>
+								</div>
+								<div class="text-sm text-gray-600">
+									<span class="font-medium">From:</span> {(booking as any).mentee?.name || 'Anonymous'}
+									{#if booking.session_time}
+										<span class="ml-4 font-medium">Requested Time:</span> {utcToBD(booking.session_time)}
+									{/if}
+								</div>
+							</div>
+							<div class="text-right">
+								<div class="text-xs text-gray-500">
+									{utcToBD(booking.created_at)}
+								</div>
+								{#if booking.status === 'Pending'}
+									<div class="mt-2 space-y-2">
+										<button 
+											class="w-full px-3 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors"
+											onclick={(e) => {
+												e.stopPropagation();
+												(async () => {
+													try {
+														if (!$user?.id) {
+															toast.show('User not authenticated', 'error');
+															return;
+														}
+
+														// Update booking status
+														const { error: bookingError } = await supabase
+															.from('bookings')
+															.update({ status: 'Confirmed' })
+															.eq('booking_id', booking.booking_id);
+
+														if (bookingError) throw bookingError;
+
+														// Create notification for mentee
+														const { error: notificationError } = await supabase
+															.from('notifications')
+															.insert([
+																{
+																	user_id: booking.mentee_id,
+																	message: `${$profile?.name || 'Mentor'} has accepted your booking request! Check your upcoming schedule.`,
+																	type: 'Booking'
+																}
+															]);
+
+														if (notificationError) throw notificationError;
+
+														toast.show('Booking confirmed successfully!', 'success');
+														window.location.reload();
+													} catch (error) {
+														console.error('Error confirming booking:', error);
+														toast.show('Failed to confirm booking', 'error');
+													}
+												})();
+											}}
+										>
+											Accept Booking
+										</button>
+										<button 
+											class="w-full px-3 py-1.5 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
+											onclick={(e) => {
+												e.stopPropagation();
+												(async () => {
+													try {
+														if (!$user?.id) {
+															toast.show('User not authenticated', 'error');
+															return;
+														}
+
+														// Update booking status
+														const { error: bookingError } = await supabase
+															.from('bookings')
+															.update({ status: 'Cancelled' })
+															.eq('booking_id', booking.booking_id);
+
+														if (bookingError) throw bookingError;
+
+														// Create notification for mentee
+														const { error: notificationError } = await supabase
+															.from('notifications')
+															.insert([
+																{
+																	user_id: booking.mentee_id,
+																	message: `${$profile?.name || 'Mentor'} has declined your booking request.`,
+																	type: 'Booking'
+																}
+															]);
+
+														if (notificationError) throw notificationError;
+
+														toast.show('Booking declined', 'success');
+														window.location.reload();
+													} catch (error) {
+														console.error('Error declining booking:', error);
+														toast.show('Failed to decline booking', 'error');
+													}
+												})();
+											}}
+										>
+											Decline Booking
+										</button>
+										<button 
+											class="w-full px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+											onclick={() => toast.show('Counter offer feature coming soon!', 'info')}
+										>
+											Counter Offer (Coming Soon)
+										</button>
+									</div>
+								{:else if booking.status === 'Confirmed'}
+									<div class="mt-2">
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+											Session Confirmed
+										</span>
+									</div>
+								{:else if booking.status === 'Declined'}
+									<div class="mt-2">
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+											Booking Declined
+										</span>
+									</div>
+								{:else if booking.status === 'Cancelled'}
+									<div class="mt-2">
+										<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+											Declined by You
+										</span>
+									</div>
+								{/if}
 							</div>
 						</div>
 					</div>
@@ -850,7 +1115,7 @@
 					class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
 					onclick={handleStatusSort}
 				>
-					Sort by Status ({statusSortOrder === 0 ? 'Ongoing' : statusSortOrder === 1 ? 'Upcoming' : 'Completed'} first)
+					Sort by Status ({statusSortOrder === 0 ? 'Confirmed' : statusSortOrder === 1 ? 'Pending' : 'Completed'} first)
 				</button>
 				<button class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50" onclick={() => searchQuery = ''}>Clear</button>
 			</div>
@@ -877,21 +1142,23 @@
 					{#each filteredSessions as session}
 						<tr class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onclick={() => showSessionDetails(session)}>
 							<td class="py-3 px-4">
-								<div class="font-medium text-gray-900">{session.title}</div>
+								<div class="font-medium text-gray-900">{session.topic || 'General Session'}</div>
 							</td>
-							<td class="py-3 px-4 text-gray-700">{session.student}</td>
-							<td class="py-3 px-4 text-gray-700">{session.subject}</td>
+							<td class="py-3 px-4 text-gray-700">{(session as any).mentee?.name || 'Anonymous'}</td>
+							<td class="py-3 px-4 text-gray-700">{session.topic || 'General'}</td>
 							<td class="py-3 px-4 text-gray-700">
-								{new Date(session.date).toLocaleDateString()} at {new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+								{utcToBD(session.session_time)}
 							</td>
-							<td class="py-3 px-4 text-gray-700">{session.duration} min</td>
+							<td class="py-3 px-4 text-gray-700">{session.duration_minutes} min</td>
 							<td class="py-3 px-4">
 								<span class="px-2 py-1 text-xs rounded-full {
-									session.status === 'ongoing' ? 'bg-green-100 text-green-800' :
-									session.status === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
-									'bg-gray-100 text-gray-800'
+									session.status === 'Confirmed' ? 'bg-green-100 text-green-800' :
+									session.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+									session.status === 'Completed' ? 'bg-blue-100 text-blue-800' :
+									session.status === 'No-show' ? 'bg-gray-100 text-gray-800' :
+									'bg-yellow-100 text-yellow-800'
 								}">
-									{session.status}
+									{session.status === 'Pending' ? 'Unconfirmed' : session.status}
 								</span>
 							</td>
 						</tr>
@@ -923,32 +1190,52 @@
 						<div class="bg-green-50 border border-green-200 rounded-lg p-4">
 							<div class="flex items-center justify-between">
 								<div>
-									<h3 class="text-lg font-semibold text-green-800">Ongoing</h3>
-									<p class="text-2xl font-bold text-green-600">{statusStats.ongoing}</p>
+									<h3 class="text-lg font-semibold text-green-800">Confirmed</h3>
+									<p class="text-2xl font-bold text-green-600">{statusStats.confirmed}</p>
 								</div>
 								<span class="text-3xl">🟢</span>
 							</div>
-							<p class="text-sm text-green-700 mt-2">Currently active sessions</p>
+							<p class="text-sm text-green-700 mt-2">Confirmed sessions</p>
 						</div>
 						<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
 							<div class="flex items-center justify-between">
 								<div>
-									<h3 class="text-lg font-semibold text-yellow-800">Upcoming</h3>
-									<p class="text-2xl font-bold text-yellow-600">{statusStats.upcoming}</p>
+									<h3 class="text-lg font-semibold text-yellow-800">Pending</h3>
+									<p class="text-2xl font-bold text-yellow-600">{statusStats.pending}</p>
 								</div>
 								<span class="text-3xl">🟡</span>
 							</div>
-							<p class="text-sm text-yellow-700 mt-2">Scheduled future sessions</p>
+							<p class="text-sm text-yellow-700 mt-2">Awaiting confirmation</p>
+						</div>
+						<div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+							<div class="flex items-center justify-between">
+								<div>
+									<h3 class="text-lg font-semibold text-blue-800">Completed</h3>
+									<p class="text-2xl font-bold text-blue-600">{statusStats.completed}</p>
+								</div>
+								<span class="text-3xl">🔵</span>
+							</div>
+							<p class="text-sm text-blue-700 mt-2">Finished sessions</p>
+						</div>
+						<div class="bg-red-50 border border-red-200 rounded-lg p-4">
+							<div class="flex items-center justify-between">
+								<div>
+									<h3 class="text-lg font-semibold text-red-800">Cancelled</h3>
+									<p class="text-2xl font-bold text-red-600">{statusStats.cancelled}</p>
+								</div>
+								<span class="text-3xl">🔴</span>
+							</div>
+							<p class="text-sm text-red-700 mt-2">Cancelled sessions</p>
 						</div>
 						<div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
 							<div class="flex items-center justify-between">
 								<div>
-									<h3 class="text-lg font-semibold text-gray-800">Completed</h3>
-									<p class="text-2xl font-bold text-gray-600">{statusStats.completed}</p>
+									<h3 class="text-lg font-semibold text-gray-800">No-show</h3>
+									<p class="text-2xl font-bold text-gray-600">{statusStats.noshow}</p>
 								</div>
 								<span class="text-3xl">⚫</span>
 							</div>
-							<p class="text-sm text-gray-700 mt-2">Finished sessions</p>
+							<p class="text-sm text-gray-700 mt-2">Missed sessions</p>
 						</div>
 					</div>
 
@@ -1056,40 +1343,47 @@
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 						<div>
 							<span class="text-sm font-medium text-gray-700">Session Title:</span>
-							<p class="text-sm text-gray-900 mt-1">{selectedSession.title}</p>
+							<p class="text-sm text-gray-900 mt-1">{selectedSession.topic || 'General Session'}</p>
 						</div>
 						<div>
 							<span class="text-sm font-medium text-gray-700">Student:</span>
-							<p class="text-sm text-gray-900 mt-1">{selectedSession.student}</p>
+							<p class="text-sm text-gray-900 mt-1">{(selectedSession as any).mentee?.name || 'Anonymous'}</p>
 						</div>
 						<div>
 							<span class="text-sm font-medium text-gray-700">Subject:</span>
-							<p class="text-sm text-gray-900 mt-1">{selectedSession.subject}</p>
+							<p class="text-sm text-gray-900 mt-1">{selectedSession.topic || 'General'}</p>
 						</div>
 						<div>
 							<span class="text-sm font-medium text-gray-700">Duration:</span>
-							<p class="text-sm text-gray-900 mt-1">{selectedSession.duration} minutes</p>
+							<p class="text-sm text-gray-900 mt-1">{selectedSession.duration_minutes} minutes</p>
 						</div>
 						<div>
 							<span class="text-sm font-medium text-gray-700">Date:</span>
-							<p class="text-sm text-gray-900 mt-1">{new Date(selectedSession.date).toLocaleDateString()}</p>
+							<p class="text-sm text-gray-900 mt-1">{utcToBD(selectedSession.session_time).split(',')[0]}</p>
 						</div>
 						<div>
 							<span class="text-sm font-medium text-gray-700">Time:</span>
-							<p class="text-sm text-gray-900 mt-1">{new Date(selectedSession.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+							<p class="text-sm text-gray-900 mt-1">{utcToBD(selectedSession.session_time).split(',')[1]}</p>
+						</div>
+						<div>
+							<span class="text-sm font-medium text-gray-700">Fee:</span>
+							<p class="text-lg font-bold text-green-600 mt-1">Tk {selectedSession.fee || 'Not specified'}</p>
 						</div>
 					</div>
 					<div>
 						<span class="text-sm font-medium text-gray-700">Status:</span>
-						<div class="mt-1">
-							<span class="px-3 py-1 text-sm rounded-full {
-								selectedSession.status === 'ongoing' ? 'bg-green-100 text-green-800' :
-								selectedSession.status === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
-								'bg-gray-100 text-gray-800'
-							}">
-								{selectedSession.status.charAt(0).toUpperCase() + selectedSession.status.slice(1)}
-							</span>
-						</div>
+								<div class="mt-1">
+									<span class="px-3 py-1 text-sm rounded-full {
+										selectedSession.status === 'Confirmed' ? 'bg-green-100 text-green-800' :
+										selectedSession.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+										selectedSession.status === 'Completed' ? 'bg-blue-100 text-blue-800' :
+										selectedSession.status === 'No-show' ? 'bg-gray-100 text-gray-800' :
+										selectedSession.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' :
+										'bg-purple-100 text-purple-800'
+									}">
+										{selectedSession.status === 'Pending' ? 'Unconfirmed' : selectedSession.status}
+									</span>
+								</div>
 					</div>
 					<div>
 						<span class="text-sm font-medium text-gray-700">Session ID:</span>
@@ -1250,7 +1544,9 @@
 						<div class="space-y-3">
 							<div>
 								<span class="text-sm font-medium text-gray-700">Offered Amount:</span>
-								<p class="text-lg font-bold text-green-600 mt-1">Tk {selectedOffer.proposed_fee || 'Not specified'}</p>
+								<p class="text-lg font-bold text-green-600 mt-1">
+									{selectedOffer.proposed_fee ? `Tk ${selectedOffer.proposed_fee}` : `Tk ${selectedOffer.request?.budget} (Agreed to requested budget)`}
+								</p>
 							</div>
 							<div>
 								<span class="text-sm font-medium text-gray-700">Status:</span>
@@ -1321,6 +1617,277 @@
 						<div class="bg-red-50 border border-red-200 rounded-lg p-4">
 							<p class="text-red-800 text-sm">
 								This offer was declined by the mentee. You can make a new offer if the request is still open.
+							</p>
+						</div>
+					{/if}
+				</div>
+				
+				<div class="flex justify-end mt-6">
+					<Dialog.Close>
+						<Button variant="outline">Close</Button>
+					</Dialog.Close>
+				</div>
+			</Dialog.Content>
+		</Dialog.Root>
+	{/if}
+
+	<!-- Received Offer Dialog -->
+	{#if showReceivedOfferDialog && selectedReceivedOffer}
+		<Dialog.Root open={showReceivedOfferDialog} onOpenChange={(open) => showReceivedOfferDialog = open}>
+			<Dialog.Content class="max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+				<Dialog.Header>
+					<Dialog.Title>Booking Request Details</Dialog.Title>
+					<Dialog.Description>
+						Review and respond to the booking request from {(selectedReceivedOffer as any).mentee?.name || 'Anonymous'}.
+					</Dialog.Description>
+				</Dialog.Header>
+				
+				<div class="space-y-4">
+					<!-- Session Information -->
+					<div class="bg-gray-50 rounded-lg p-4">
+						<h3 class="text-lg font-semibold text-gray-900 mb-3">Session Details</h3>
+						<div class="space-y-3">
+							<div>
+								<span class="text-sm font-medium text-gray-700">Topic:</span>
+								<p class="text-sm text-gray-900 mt-1">{selectedReceivedOffer.topic || 'General Session'}</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Duration:</span>
+								<p class="text-sm text-gray-900 mt-1">{selectedReceivedOffer.duration_minutes} minutes</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Proposed Fee:</span>
+								<p class="text-lg font-bold text-green-600 mt-1">Tk {selectedReceivedOffer.fee || 'Not specified'}</p>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Requested Time:</span>
+								<p class="text-sm text-gray-900 mt-1">{utcToBD(selectedReceivedOffer.session_time)}</p>
+							</div>
+							{#if selectedReceivedOffer.message}
+								<div>
+									<span class="text-sm font-medium text-gray-700">Message:</span>
+									<p class="text-sm text-gray-900 mt-1">{selectedReceivedOffer.message}</p>
+								</div>
+							{/if}
+						</div>
+					</div>
+
+					<!-- Status Information -->
+					<div class="bg-blue-50 rounded-lg p-4">
+						<h3 class="text-lg font-semibold text-gray-900 mb-3">Booking Status</h3>
+						<div class="space-y-3">
+							<div>
+								<span class="text-sm font-medium text-gray-700">Current Status:</span>
+								<div class="mt-1">
+									<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+										{selectedReceivedOffer.status === 'Confirmed' ? 'bg-green-100 text-green-800' : 
+										 selectedReceivedOffer.status === 'Cancelled' ? 'bg-red-100 text-red-800' : 
+										 'bg-yellow-100 text-yellow-800'}">
+										{selectedReceivedOffer.status}
+									</span>
+								</div>
+							</div>
+							<div>
+								<span class="text-sm font-medium text-gray-700">Received:</span>
+								<p class="text-sm text-gray-900 mt-1">{utcToBD(selectedReceivedOffer.created_at)}</p>
+							</div>
+						</div>
+					</div>
+
+					<!-- Actions -->
+					{#if selectedReceivedOffer.status === 'Pending'}
+						<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+							<p class="text-yellow-800 text-sm mb-4">
+								You can accept this offer, decline it, or negotiate the terms.
+							</p>
+							<div class="space-y-4">
+								<!-- Negotiation Form -->
+								<div class="space-y-3">
+									<div>
+										<label for="counter-fee" class="block text-sm font-medium text-gray-700 mb-1">
+											Counter Offer Amount (Tk)
+										</label>
+										<input 
+											id="counter-fee"
+											type="number"
+											bind:value={negotiationData.proposed_fee}
+											min="0"
+											step="100"
+											class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+										/>
+									</div>
+									<div>
+										<label for="counter-time" class="block text-sm font-medium text-gray-700 mb-1">
+											Preferred Time
+										</label>
+										<input 
+											id="counter-time"
+											type="datetime-local"
+											bind:value={negotiationData.proposed_time}
+											class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+										/>
+									</div>
+									<div>
+										<label for="counter-message" class="block text-sm font-medium text-gray-700 mb-1">
+											Message
+										</label>
+										<textarea 
+											id="counter-message"
+											bind:value={negotiationData.message}
+											rows="2"
+											placeholder="Explain your counter-offer..."
+											class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+										></textarea>
+									</div>
+								</div>
+								<!-- Action Buttons -->
+								<div class="flex flex-wrap gap-2">
+									<Button 
+										onclick={async () => {
+											try {
+												if (!$user?.id) {
+													toast.show('User not authenticated', 'error');
+													return;
+												}
+
+												// Update booking status
+												const { error: bookingError } = await supabase
+													.from('bookings')
+													.update({ status: 'Confirmed' })
+													.eq('booking_id', selectedReceivedOffer.booking_id);
+
+												if (bookingError) throw bookingError;
+
+												// Create notification for mentee
+												const { error: notificationError } = await supabase
+													.from('notifications')
+													.insert([
+														{
+															user_id: selectedReceivedOffer.mentee_id,
+															message: `${$profile?.name || 'Mentor'} has accepted your booking request! Check your upcoming schedule.`,
+															type: 'Booking'
+														}
+													]);
+
+												if (notificationError) throw notificationError;
+
+												toast.show('Booking confirmed successfully!', 'success');
+												window.location.reload();
+											} catch (error) {
+												console.error('Error confirming booking:', error);
+												toast.show('Failed to confirm booking', 'error');
+											}
+										}}
+										class="bg-green-600 hover:bg-green-700"
+									>
+										Accept Offer
+									</Button>
+									<Button 
+										onclick={async () => {
+											try {
+												if (!$user?.id) {
+													toast.show('User not authenticated', 'error');
+													return;
+												}
+
+												// Update booking status
+												const { error: bookingError } = await supabase
+													.from('bookings')
+													.update({ status: 'Cancelled' })
+													.eq('booking_id', selectedReceivedOffer.booking_id);
+
+												if (bookingError) throw bookingError;
+
+												// Create notification for mentee
+												const { error: notificationError } = await supabase
+													.from('notifications')
+													.insert([
+														{
+															user_id: selectedReceivedOffer.mentee_id,
+															message: `${$profile?.name || 'Mentor'} has declined your booking request.`,
+															type: 'Booking'
+														}
+													]);
+
+												if (notificationError) throw notificationError;
+
+												toast.show('Booking declined', 'success');
+												window.location.reload();
+											} catch (error) {
+												console.error('Error declining booking:', error);
+												toast.show('Failed to decline booking', 'error');
+											}
+										}}
+										class="bg-red-600 hover:bg-red-700"
+									>
+										Decline Offer
+									</Button>
+									<Button 
+										onclick={async () => {
+											try {
+												if (!$user?.id) {
+													toast.show('User not authenticated', 'error');
+													return;
+												}
+												if (!negotiationData.message) {
+													toast.show('Please provide a message for your counter-offer', 'error');
+													return;
+												}
+												// Update booking with counter-offer details
+												const { error: bookingError } = await supabase
+													.from('bookings')
+													.update({
+														session_time: negotiationData.proposed_time,
+														fee: negotiationData.proposed_fee,
+														message: negotiationData.message,
+														status: 'Negotiating'
+													})
+													.eq('booking_id', selectedReceivedOffer.booking_id);
+
+												if (bookingError) throw bookingError;
+
+												// Create notification for mentee
+												const { error: notificationError } = await supabase
+													.from('notifications')
+													.insert([
+														{
+															user_id: selectedReceivedOffer.mentee_id,
+															message: `${$profile?.name || 'Mentor'} has sent a counter-offer for your booking request. Check the details.`,
+															type: 'Booking'
+														}
+													]);
+
+												if (notificationError) throw notificationError;
+												toast.show('Counter-offer sent successfully', 'success');
+												window.location.reload();
+											} catch (error) {
+												console.error('Error sending counter-offer:', error);
+												toast.show('Failed to send counter-offer', 'error');
+											}
+										}}
+										class="bg-blue-600 hover:bg-blue-700"
+									>
+										Send Counter-Offer
+									</Button>
+								</div>
+							</div>
+						</div>
+					{:else if selectedReceivedOffer.status === 'Accepted'}
+						<div class="bg-green-50 border border-green-200 rounded-lg p-4">
+							<p class="text-green-800 text-sm">
+								🎉 You've accepted this offer. The session has been scheduled.
+							</p>
+						</div>
+					{:else if selectedReceivedOffer.status === 'Declined'}
+						<div class="bg-red-50 border border-red-200 rounded-lg p-4">
+							<p class="text-red-800 text-sm">
+								You've declined this booking request.
+							</p>
+						</div>
+					{:else if selectedReceivedOffer.status === 'Withdrawn'}
+						<div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+							<p class="text-gray-800 text-sm">
+								The mentor has withdrawn this offer.
 							</p>
 						</div>
 					{/if}

@@ -236,12 +236,23 @@ export class HelpOffer {
       if (cancelBookingsError) throw cancelBookingsError;
 
       // Update the booking for this offer to Confirmed
-      const { error: confirmBookingError } = await supabase
+      const { data: existingBooking, error: existingBookingError } = await supabase
         .from('bookings')
-        .update({ status: 'Confirmed' })
-        .eq('offer_id', this.offer_id);
+        .select('*')
+        .eq('offer_id', this.offer_id)
+        .single();
 
-      if (confirmBookingError) throw confirmBookingError;
+      if (existingBookingError && existingBookingError.code !== 'PGRST116') throw existingBookingError;
+
+      if (existingBooking) {
+        // Update existing booking
+        const { error: confirmBookingError } = await supabase
+          .from('bookings')
+          .update({ status: 'Confirmed' })
+          .eq('booking_id', existingBooking.booking_id);
+
+        if (confirmBookingError) throw confirmBookingError;
+      }
 
       // Finally, mark the request as assigned
       const { error: requestError } = await supabase
@@ -261,7 +272,18 @@ export class HelpOffer {
   // Decline offer
   async decline(): Promise<HelpOffer> {
     try {
-      return await this.update({ status: 'Declined' });
+      // Update offer status to declined
+      await this.update({ status: 'Declined' });
+
+      // Cancel the associated booking
+      const { error: cancelBookingError } = await supabase
+        .from('bookings')
+        .update({ status: 'Cancelled' })
+        .eq('offer_id', this.offer_id);
+
+      if (cancelBookingError) throw cancelBookingError;
+
+      return this;
     } catch (error) {
       console.error('Error declining offer:', error);
       throw error;

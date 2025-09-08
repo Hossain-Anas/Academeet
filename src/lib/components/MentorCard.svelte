@@ -30,6 +30,7 @@
   let selectedTopic = '';
   let selectedDateTime = '';
   let selectedDuration = 60;
+  let budget = 0;
   let message = '';
   let isTimeSlotValid = true;
   let isBookingSuccess = false;
@@ -224,12 +225,14 @@
       // Convert BD time to UTC for database storage
       const utcDateTime = bdToUTC(selectedDateTime).toISOString();
 
-      console.log('Booking details:', {
+      console.log('Request details:', {
         selectedDateTime_BD: selectedDateTime,
         utcDateTime: utcDateTime,
-        duration: selectedDuration
+        duration: selectedDuration,
+        budget: budget
       });
 
+      // Create a booking directly
       const { data: booking, error: bookingError } = await supabase
         .from('bookings')
         .insert({
@@ -237,50 +240,34 @@
           mentor_id: mentor.user_id,
           session_time: utcDateTime,
           duration_minutes: selectedDuration,
-          status: 'Pending',
+          fee: budget,
           topic: selectedTopic,
-          message: message
+          message: message,
+          status: 'Pending'
         })
         .select(`
-          booking_id,
-          mentee_id,
-          mentor_id,
-          session_time,
-          duration_minutes,
-          status,
-          topic,
-          message,
-          mentee:users!bookings_mentee_id_fkey (
-            name,
-            email
-          ),
-          mentor:users!bookings_mentor_id_fkey (
-            name,
-            email
-          )
+          *,
+          mentor:users!bookings_mentor_id_fkey(*),
+          mentee:users!bookings_mentee_id_fkey(*)
         `)
         .single();
 
       if (bookingError) {
-        console.error('Booking request failed:', bookingError);
-        throw new Error(bookingError.message || 'Failed to book session');
+        console.error('Booking creation failed:', bookingError);
+        throw new Error(bookingError.message || 'Failed to create booking');
       }
 
-      // Create notifications with proper time formatting
-      const menteeName = (booking.mentee as any)?.name || 'Unknown';
-      const mentorName = (booking.mentor as any)?.name || 'Unknown';
-      const bdTimeFormatted = utcToBD(utcDateTime);
-      
+      // Create notifications
       const notifications = [
         {
           user_id: mentor.user_id,
-          message: `New session request from ${menteeName} for ${selectedTopic} on ${bdTimeFormatted}`,
+          message: `New booking request from ${$user?.user_metadata?.name || 'Unknown'} for ${selectedTopic}`,
           type: 'Booking',
           is_read: false
         },
         {
           user_id: $user?.id,
-          message: `Session request sent to ${mentorName} for ${selectedTopic} at ${bdTimeFormatted}. Awaiting confirmation.`,
+          message: `Booking request sent to ${mentor.name} for ${selectedTopic}. Awaiting response.`,
           type: 'Booking',
           is_read: false
         }
@@ -306,7 +293,9 @@
           (payload: { new: { status: string } }) => {
             console.log('Booking status changed:', payload);
             if (payload.new.status === 'Confirmed') {
-              toast.show('Session confirmed! Check your upcoming sessions.', 'success');
+              toast.show('Booking confirmed! Check your upcoming sessions.', 'success');
+            } else if (payload.new.status === 'Declined') {
+              toast.show('Booking declined by mentor.', 'error');
             }
           }
         )
@@ -481,6 +470,7 @@
               selectedTopic = '';
               selectedDateTime = '';
               selectedDuration = 60;
+              budget = 0;
               message = '';
               isTimeSlotValid = true;
             }
@@ -498,114 +488,132 @@
               {/if}
              </button>
            </Dialog.Trigger>
-          <Dialog.Content>
+          <Dialog.Content class="max-w-md w-full">
             <Dialog.Header>
               <Dialog.Title>Book a Session with {mentor.name}</Dialog.Title>
-              <Dialog.Description>
-                Schedule a mentoring session with {mentor.name} from {mentor.department}. 
-                Choose your preferred time and topic for the session.
+              <Dialog.Description class="text-sm">
+                Schedule a mentoring session with {mentor.name} from {mentor.department}
               </Dialog.Description>
             </Dialog.Header>
             
             <!-- Session Booking Form -->
-            <form on:submit|preventDefault={handleBookSession} class="space-y-4 py-4">
-              <div>
-                <label for="session-topic" class="block text-sm font-medium text-gray-700 mb-2">
-                  Session Topic
-                </label>
-                <select 
-                  id="session-topic" 
-                  bind:value={selectedTopic}
-                  required
-                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select a topic</option>
-                  {#each mentor.skills as skill}
-                    <option value={skill}>{skill}</option>
-                  {/each}
-                  <option value="other">Other (specify in message)</option>
-                </select>
-              </div>
-              
-              <div>
-                <label for="session-datetime" class="block text-sm font-medium text-gray-700 mb-2">
-                  Preferred Date & Time (Bangladesh Time)
-                </label>
-                <input 
-                  id="session-datetime"
-                  type="datetime-local" 
-                  bind:value={selectedDateTime}
-                  min={minDateTime}
-                  required
-                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div>
-                <label for="session-duration" class="block text-sm font-medium text-gray-700 mb-2">
-                  Session Duration
-                </label>
-                <select 
-                  id="session-duration"
-                  bind:value={selectedDuration}
-                  required
-                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="30">30 minutes</option>
-                  <option value="60">1 hour</option>
-                  <option value="90">1.5 hours</option>
-                  <option value="120">2 hours</option>
-                </select>
-              </div>
-              
-              <div>
-                <label for="session-message" class="block text-sm font-medium text-gray-700 mb-2">
-                  Message (Optional)
-                </label>
-                <textarea 
-                  id="session-message"
-                  bind:value={message}
-                  placeholder="Describe what you'd like to work on or any specific questions..."
-                  rows="3"
-                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                ></textarea>
-              </div>
-              
-              <!-- Success Message -->
-              {#if isBookingSuccess}
-                <div class="flex flex-col items-center justify-center py-4 space-y-4">
-                  <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-                    <span class="text-2xl text-green-600">✓</span>
-                  </div>
-                  <h3 class="text-lg font-semibold text-gray-900">Booking Successful!</h3>
-                  <p class="text-sm text-gray-600 text-center">
-                    Your session has been booked successfully. You can view the details in your upcoming schedules.
-                  </p>
-            </div>
-              {:else}
-            <!-- Dialog Actions -->
-            <div class="flex justify-end space-x-2 pt-4">
-              <Dialog.Close>
-                    <button 
-                      type="button"
-                      class="px-4 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                  Cancel
-                </button>
-              </Dialog.Close>
-                  <button 
-                    type="submit"
-                    disabled={isSubmitting || !isTimeSlotValid || !selectedDateTime || !selectedDuration}
-                    class="px-4 py-2 text-white text-sm rounded-lg transition-colors disabled:opacity-50 {isTimeSlotValid && selectedDateTime && selectedDuration ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400'}"
+            <div class="max-h-[70vh] overflow-y-auto pr-2">
+              <form on:submit|preventDefault={handleBookSession} class="space-y-3 py-2">
+                <div>
+                  <label for="session-topic" class="block text-sm font-medium text-gray-700 mb-1">
+                    Session Topic
+                  </label>
+                  <select 
+                    id="session-topic" 
+                    bind:value={selectedTopic}
+                    required
+                    class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    {isSubmitting ? 'Booking...' : 
-                      !selectedDateTime || !selectedDuration ? 'Select Date & Time' :
-                      !isTimeSlotValid ? (selectedDateTime && selectedDuration ? 'Time Slot Not Available - Check Schedule' : 'Time Slot Not Available') : 
-                      'Book Session'}
-              </button>
+                    <option value="">Select a topic</option>
+                    {#each mentor.skills as skill}
+                      <option value={skill}>{skill}</option>
+                    {/each}
+                    <option value="other">Other (specify in message)</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label for="session-datetime" class="block text-sm font-medium text-gray-700 mb-1">
+                    Preferred Date & Time (BD)
+                  </label>
+                  <input 
+                    id="session-datetime"
+                    type="datetime-local" 
+                    bind:value={selectedDateTime}
+                    min={minDateTime}
+                    required
+                    class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                
+                <div>
+                  <label for="session-duration" class="block text-sm font-medium text-gray-700 mb-1">
+                    Session Duration
+                  </label>
+                  <select 
+                    id="session-duration"
+                    bind:value={selectedDuration}
+                    required
+                    class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="90">1.5 hours</option>
+                    <option value="120">2 hours</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label for="session-budget" class="block text-sm font-medium text-gray-700 mb-1">
+                    Your Budget (Tk)
+                  </label>
+                  <input 
+                    id="session-budget"
+                    type="number"
+                    bind:value={budget}
+                    min="0"
+                    step="100"
+                    required
+                    placeholder="Enter your budget in Taka"
+                    class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-0.5">The mentor can accept, decline, or negotiate the budget</p>
+                </div>
+                
+                <div>
+                  <label for="session-message" class="block text-sm font-medium text-gray-700 mb-1">
+                    Message (Optional)
+                  </label>
+                  <textarea 
+                    id="session-message"
+                    bind:value={message}
+                    placeholder="Describe what you'd like to work on..."
+                    rows="2"
+                    class="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  ></textarea>
+                </div>
+                
+                <!-- Success Message -->
+                {#if isBookingSuccess}
+                  <div class="flex flex-col items-center justify-center py-3 space-y-3">
+                    <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                      <span class="text-xl text-green-600">✓</span>
+                    </div>
+                    <h3 class="text-base font-semibold text-gray-900">Booking Successful!</h3>
+                    <p class="text-sm text-gray-600 text-center">
+                      Your session has been booked successfully. Check your upcoming schedules.
+                    </p>
+                  </div>
+                {:else}
+                  <!-- Dialog Actions -->
+                  <div class="flex justify-end space-x-2 pt-3">
+                    <Dialog.Close>
+                      <button 
+                        type="button"
+                        class="px-3 py-1.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </Dialog.Close>
+                    <button 
+                      type="submit"
+                      disabled={isSubmitting || !isTimeSlotValid || !selectedDateTime || !selectedDuration}
+                      class="px-3 py-1.5 text-white text-sm rounded-lg transition-colors disabled:opacity-50 {isTimeSlotValid && selectedDateTime && selectedDuration ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400'}"
+                    >
+                      {isSubmitting ? 'Booking...' : 
+                        !selectedDateTime || !selectedDuration ? 'Select Date & Time' :
+                        !isTimeSlotValid ? 'Time Slot Not Available' : 
+                        'Book Session'}
+                    </button>
+                  </div>
+                {/if}
+              </form>
             </div>
-              {/if}
-            </form>
                      </Dialog.Content>
          </Dialog.Root>
       </div>

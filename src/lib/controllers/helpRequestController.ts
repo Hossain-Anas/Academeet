@@ -12,6 +12,7 @@ interface CreateHelpRequestData {
   description: string;
   preferred_time?: string;
   budget?: number;
+  duration_minutes?: number;
 }
 
 // Interface for updating help request
@@ -41,7 +42,7 @@ export class HelpRequestController {
   // Create a new help request
   static async createHelpRequest(requestData: CreateHelpRequestData): Promise<HelpRequestData> {
     try {
-      const { mentee_id, title, course_code, description, preferred_time, budget } = requestData;
+      const { mentee_id, title, course_code, description, preferred_time, budget, duration_minutes } = requestData;
 
       // Validate required fields
       if (!mentee_id || !title || !description) {
@@ -55,7 +56,8 @@ export class HelpRequestController {
         course_code,
         description,
         preferred_time: preferred_time || null,
-        budget: budget || null
+        budget: budget || null,
+        duration_minutes: duration_minutes || 30
       });
 
       return helpRequest.toJSON();

@@ -338,14 +338,14 @@ export class BookingController {
       // Notify mentee
       await Notification.create({
         user_id: booking.mentee_id,
-        message: `Your session for "${helpRequest.title}" has been scheduled for ${booking.session_time}.`,
+        message: `Your session for "${helpRequest.title}" has been scheduled.`,
         type: 'Booking'
       });
 
       // Notify mentor
       await Notification.create({
         user_id: booking.mentor_id,
-        message: `A new session has been scheduled for ${booking.session_time}.`,
+        message: `A new session has been scheduled.`,
         type: 'Booking'
       });
     } catch (error) {

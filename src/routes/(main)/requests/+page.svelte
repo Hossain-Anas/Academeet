@@ -14,11 +14,20 @@
 		course_code: '',
 		description: '',
 		preferred_time: '',
-		budget: ''
+		budget: '',
+		duration_minutes: '30' // Default to 30 minutes
 	};
 
 	// Loading states
 	let isSubmitting = false;
+	let isTimeSlotValid = true;
+
+	// Get minimum date-time (now + 30 minutes to allow for processing)
+	$: minDateTime = (() => {
+		const now = new Date();
+		now.setMinutes(now.getMinutes() + 30);
+		return now.toISOString().slice(0, 16);
+	})();
 
 	// Get current user
 	async function getCurrentUserId() {
@@ -109,7 +118,13 @@
 			// Very simple query - just get help requests without joins
 			const { data, error: supabaseError } = await supabase
 				.from('help_requests')
-				.select('*')
+				.select(`
+					*,
+					mentee:users!help_requests_mentee_id_fkey(
+						name,
+						department
+					)
+				`)
 				.eq('status', 'Open')
 				.order('created_at', { ascending: false });
 			
@@ -120,11 +135,11 @@
 				throw supabaseError;
 			}
 			
-			// Add mock user data for display
+			// Map request data with mentee details
 			requests = (data || []).map(request => ({
 				...request,
-				mentee_name: 'Anonymous User', // We'll get real names later
-				department: 'Unknown'
+				mentee_name: request.mentee?.name || 'Anonymous User',
+				department: request.mentee?.department || 'Unknown'
 			}));
 			
 			console.log('Final requests:', requests);
@@ -184,6 +199,96 @@
 		}
 	});
 
+	// Check time slot whenever datetime or duration changes
+	$: {
+		if (formData.preferred_time && formData.duration_minutes) {
+			isTimeSlotValid = false; // Set to false while checking
+			checkExistingBookings(formData.preferred_time, parseInt(formData.duration_minutes)).then(result => {
+				isTimeSlotValid = !result.hasConflict;
+				if (result.hasConflict) {
+					toast.show(result.error || 'Time slot not available', 'warning');
+				}
+			});
+		} else {
+			isTimeSlotValid = true; // Default to valid if no date/time selected
+		}
+	}
+
+	// Helper function to check if two time ranges overlap
+	function hasTimeOverlap(
+		start1: Date, 
+		end1: Date, 
+		start2: Date, 
+		end2: Date
+	): boolean {
+		return start1 < end2 && start2 < end1;
+	}
+
+	// Convert BD time to UTC for database storage
+	function bdToUTC(bdDateTime: string | Date): Date {
+		const bdDate = typeof bdDateTime === 'string' ? new Date(bdDateTime) : new Date(bdDateTime);
+		
+		// The input from datetime-local is treated as local time
+		// We need to interpret it as BD time and convert to UTC
+		const year = bdDate.getFullYear();
+		const month = bdDate.getMonth();
+		const day = bdDate.getDate();
+		const hour = bdDate.getHours();
+		const minute = bdDate.getMinutes();
+		const second = bdDate.getSeconds();
+		
+		// Create UTC date by subtracting 6 hours (BD is UTC+6)
+		return new Date(Date.UTC(year, month, day, hour - 6, minute, second));
+	}
+
+	async function checkExistingBookings(startTime: string, duration: number): Promise<{ hasConflict: boolean; error?: string }> {
+		try {
+			// Parse the selected time as BD time and convert to UTC for comparison
+			const selectedStartUTC = bdToUTC(startTime);
+			const now = new Date();
+			
+			if (selectedStartUTC <= now) {
+				return { hasConflict: true, error: 'Cannot request sessions in the past' };
+			}
+
+			// Calculate the new session time range in UTC
+			const newSessionStart = selectedStartUTC;
+			const newSessionEnd = new Date(newSessionStart.getTime() + duration * 60000);
+
+			// Check mentee's existing bookings
+			const { data: menteeBookings, error: menteeError } = await supabase
+				.from('bookings')
+				.select('*, mentor:users!bookings_mentor_id_fkey (name)')
+				.eq('mentee_id', $user?.id)
+				.in('status', ['Pending', 'Confirmed']);
+
+			if (menteeError) throw menteeError;
+
+			// Check for overlaps with mentee's existing bookings
+			if (menteeBookings && menteeBookings.length > 0) {
+				for (const booking of menteeBookings) {
+					const existingStart = new Date(booking.session_time);
+					const existingEnd = new Date(existingStart.getTime() + booking.duration_minutes * 60000);
+					
+					if (hasTimeOverlap(newSessionStart, newSessionEnd, existingStart, existingEnd)) {
+						const mentorName = booking.mentor?.name || 'a mentor';
+						const sessionStatus = booking.status.toLowerCase();
+						
+						return { 
+							hasConflict: true, 
+							error: `You already have a ${sessionStatus} session with ${mentorName} from ${utcToBD(existingStart.toISOString())} to ${utcToBD(existingEnd.toISOString())}`
+						};
+					}
+				}
+			}
+
+			return { hasConflict: false };
+		} catch (error) {
+			console.error('Error checking existing bookings:', error);
+			return { hasConflict: false };
+		}
+	}
+
 	async function handleSubmit() {
 		try {
 			isSubmitting = true;
@@ -200,16 +305,15 @@
 			// Handle preferred_time - convert from local time to UTC for storage
 			let preferredTimeUTC = undefined;
 			if (formData.preferred_time) {
-				// datetime-local gives us a string like "2025-09-07T09:30"
-				// This is already in local time (Bangladesh time)
-				// We need to convert it to UTC for storage
-				const localDate = new Date(formData.preferred_time);
-				
-				// Convert to UTC (JavaScript handles timezone conversion automatically)
-				preferredTimeUTC = localDate.toISOString();
-				console.log('Original local time:', formData.preferred_time);
-				console.log('Local date object:', localDate.toString());
-				console.log('Converted to UTC:', preferredTimeUTC);
+				// Check for time slot conflicts
+				const conflictCheck = await checkExistingBookings(formData.preferred_time, parseInt(formData.duration_minutes));
+				if (conflictCheck.hasConflict) {
+					toast.show(conflictCheck.error || 'Time slot is not available', 'error');
+					return;
+				}
+
+				// Convert to UTC for storage
+				preferredTimeUTC = bdToUTC(formData.preferred_time).toISOString();
 			}
 
 			// Create help request
@@ -219,7 +323,8 @@
 				course_code: formData.course_code || undefined,
 				description: formData.description,
 				preferred_time: preferredTimeUTC,
-				budget: budget
+				budget: budget,
+				duration_minutes: parseInt(formData.duration_minutes)
 			});
 
 			// Show success message
@@ -231,7 +336,8 @@
 				course_code: '',
 				description: '',
 				preferred_time: '',
-				budget: ''
+				budget: '',
+				duration_minutes: '30'
 			};
 
 			// Simple page reload to show updated data
@@ -303,8 +409,24 @@
 							id="preferred_time"
 							type="datetime-local"
 							bind:value={formData.preferred_time}
+							min={minDateTime}
 							class="mt-1"
 						/>
+					</div>
+
+					<div>
+						<Label for="duration" class="text-sm font-medium text-gray-700">Session Duration</Label>
+						<select 
+							id="duration"
+							bind:value={formData.duration_minutes}
+							required
+							class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+						>
+							<option value="30">30 minutes</option>
+							<option value="60">1 hour</option>
+							<option value="90">1.5 hours</option>
+							<option value="120">2 hours</option>
+						</select>
 					</div>
 					
 					<div>
@@ -325,7 +447,7 @@
 					<button
 						type="submit"
 						class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-blue-400 disabled:cursor-not-allowed"
-						disabled={isSubmitting}
+						disabled={isSubmitting || !isTimeSlotValid}
 					>
 						{#if isSubmitting}
 							Posting...
@@ -489,14 +611,12 @@
 														proposed_fee: offerData.proposed_fee ? parseFloat(offerData.proposed_fee) : undefined
 													});
 
-													toast.show('Offer submitted successfully!', 'success');
+													toast.show('Offer submitted successfully! The mentee will be notified.', 'success');
 													offerData = { message: '', proposed_time: '', proposed_fee: '' };
 													dialogOpen = false;
 													
-													// Simple page reload to show updated data
-													setTimeout(() => {
-														window.location.reload();
-													}, 1000);
+													// Reload page to show updated data
+													window.location.reload();
 												} catch (error) {
 													console.error('Error submitting offer:', error);
 													const errorMessage = error instanceof Error ? error.message : 'Failed to submit offer';
